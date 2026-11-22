@@ -179,12 +179,22 @@ def test_readiness_checks_database_and_hosted_configuration(monkeypatch):
 
     monkeypatch.setattr(api, "DATABASE_URL", "postgresql://example")
     monkeypatch.setattr(api, "_membership_connection", ReadyDatabase())
+    class JwksClient:
+        def get_signing_keys(self):
+            return [object()]
+
+    monkeypatch.setattr(api, "_jwks_client", lambda: JwksClient())
     monkeypatch.setenv("SUPABASE_URL", "https://project.supabase.co")
     monkeypatch.setenv("COHORT_CORS_ORIGINS", "https://dashboard.example")
 
     assert api.ready() == {
         "ok": True,
-        "checks": {"database": True, "supabase_url": True, "cors_origins": True},
+        "checks": {
+            "database": True,
+            "supabase_url": True,
+            "supabase_jwks": True,
+            "cors_origins": True,
+        },
     }
 
 
@@ -208,5 +218,6 @@ def test_readiness_fails_closed_when_supabase_or_database_is_unavailable(monkeyp
     assert exc.value.detail["checks"] == {
         "database": False,
         "supabase_url": False,
+        "supabase_jwks": False,
         "cors_origins": True,
     }
