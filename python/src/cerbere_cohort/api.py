@@ -349,14 +349,14 @@ class WorkspaceProfileUpdate(BaseModel):
     @field_validator("website")
     @classmethod
     def _validate_website(cls, value: str | None) -> str | None:
-        if value and not re.match(r"^https?://[^\\s/]+(?:/[^\\s]*)?$", value, re.IGNORECASE):
+        if value and not re.match(r"^https?://[^\s/]+(?:/[^\s]*)?$", value, re.IGNORECASE):
             raise ValueError("Website must be a valid HTTP or HTTPS URL")
         return value
 
     @field_validator("contact_email")
     @classmethod
     def _validate_contact_email(cls, value: str | None) -> str | None:
-        if value and not re.match(r"^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$", value):
+        if value and not re.match(r"^[^\s@]+@[^\s@]+\.[^\s@]+$", value):
             raise ValueError("Enter a valid contact email")
         return value
 
@@ -961,7 +961,7 @@ class InvitationCreate(BaseModel):
     @classmethod
     def _normalize_email(cls, value: str) -> str:
         value = value.strip().lower()
-        if not re.fullmatch(r"[^\\s@]+@[^\\s@]+\\.[^\\s@]+", value):
+        if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", value):
             raise ValueError("A valid email address is required")
         return value
 
