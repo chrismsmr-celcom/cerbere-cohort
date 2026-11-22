@@ -28,7 +28,7 @@ const stored = <T extends string>(key: string, allowed: T[], fallback: T): T => 
 
 type Modalish = { kind: "create" } | { kind: "resolve"; branch: Branch } | { kind: "write"; branch: Branch } | { kind: "diff"; branch: Branch } | { kind: "plans" } | { kind: "cerbere" } | { kind: "palette" } | { kind: "inspector"; index: number } | null;
 
-function Shell({ userEmail, onSignOut, workspaces, activeWorkspace, onWorkspaceChange, onWorkspaceProfileChange }: { userEmail?: string; onSignOut?: () => void; workspaces?: CohortWorkspace[]; activeWorkspace?: CohortWorkspace; onWorkspaceChange?: (id: string) => void; onWorkspaceProfileChange?: (profile: { id: string; name: string }) => void }) {
+function Shell({ userEmail, onSignOut, workspaces, activeWorkspace, onWorkspaceChange, onWorkspaceProfileChange }: { userEmail?: string; onSignOut?: () => void; workspaces?: CohortWorkspace[]; activeWorkspace?: CohortWorkspace; onWorkspaceChange?: (id: string) => void; onWorkspaceProfileChange?: (profile: { id: string; name: string; logo_url?: string | null }) => void }) {
   const toast = useToast();
   const { data, refresh } = useCohort();
   const cerbere = useOptional<CerbereSummary>("/cerbere/summary?window=24h", 60000);
@@ -92,7 +92,7 @@ function Shell({ userEmail, onSignOut, workspaces, activeWorkspace, onWorkspaceC
     {modal?.kind === "cerbere" && <CerbereDrawer onClose={close} />}
     {modal?.kind === "palette" && <CommandPalette data={data} onClose={close} onNavigate={go} />}
     {modal?.kind === "inspector" && <EventInspector events={data.events} index={modal.index} setIndex={(i) => setModal({ kind: "inspector", index: i })} onClose={close} />}
-    {organizationProfileOpen && activeWorkspace && <OrganizationProfileModal workspace={activeWorkspace} onClose={() => setOrganizationProfileOpen(false)} onSaved={(profile) => onWorkspaceProfileChange?.({ id: profile.id, name: profile.name })} />}
+    {organizationProfileOpen && activeWorkspace && <OrganizationProfileModal workspace={activeWorkspace} onClose={() => setOrganizationProfileOpen(false)} onSaved={(profile) => onWorkspaceProfileChange?.({ id: profile.id, name: profile.name, logo_url: profile.logo_url })} />}
   </div>;
 }
 
