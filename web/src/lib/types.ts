@@ -1,4 +1,4 @@
-export type Tab = "overview" | "branches" | "state" | "leases" | "events" | "gateway" | "performance" | "advisor" | "settings" | "traction";
+export type Tab = "overview" | "branches" | "state" | "leases" | "events" | "gateway" | "performance" | "advisor" | "coordination" | "settings";
 
 /* ---- Contracts of endpoints that exist today (python/src/cerbere_cohort/api.py) ---- */
 export type EventItem = { event_id: string; timestamp: string; agent_id: string; action: string; payload: Record<string, unknown>; schema_version: string };
