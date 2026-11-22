@@ -96,6 +96,6 @@ function Shell({ userEmail, onSignOut, workspaces, activeWorkspace, onWorkspaceC
   </div>;
 }
 
-export default function Dashboard(props: { userEmail?: string; onSignOut?: () => void; workspaces?: CohortWorkspace[]; activeWorkspace?: CohortWorkspace; onWorkspaceChange?: (id: string) => void; onWorkspaceProfileChange?: (profile: { id: string; name: string }) => void }) {
+export default function Dashboard(props: { userEmail?: string; onSignOut?: () => void; workspaces?: CohortWorkspace[]; activeWorkspace?: CohortWorkspace; onWorkspaceChange?: (id: string) => void; onWorkspaceProfileChange?: (profile: { id: string; name: string; logo_url?: string | null }) => void }) {
   return <ToastProvider><Shell {...props} /></ToastProvider>;
 }
