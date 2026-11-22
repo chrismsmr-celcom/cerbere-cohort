@@ -42,7 +42,7 @@ export default function OrganizationProfileModal({ workspace, onClose, onSaved }
   useEffect(() => {
     let active = true;
     void api<{ profile: Profile }>("/workspace/profile")
-      .then((result) => { if (active) { setProfile({ ...emptyProfile(workspace), ...result.profile }); setInitialLogoUrl(result.profile.logo_url || null); } })
+      .then((result) => { if (active) { const loadedProfile = { ...emptyProfile(workspace), ...result.profile }; setProfile(loadedProfile); setInitialLogoUrl(result.profile.logo_url || null); onSaved(loadedProfile); } })
       .catch((err) => { if (active) { setLoadFailed(true); setError(err instanceof Error ? err.message : "Unable to load organization profile."); } })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
