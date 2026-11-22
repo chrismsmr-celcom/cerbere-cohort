@@ -375,6 +375,11 @@ class BranchWrite(BaseModel):
         return value
 
 
+class CommitRequest(BaseModel):
+    # Exact snapshot version read when the branch was created.
+    expected_head_version: str | None = Field(default=None, min_length=64, max_length=64)
+
+
 class LeaseRequest(BaseModel):
     agent_id: str = Field(min_length=1, max_length=120)
     key: str = Field(min_length=1, max_length=500)
@@ -587,13 +592,20 @@ def write_branch(branch_id: str, body: BranchWrite, context: dict[str, Any] = De
 
 
 @app.post("/api/branches/{branch_id}/commit")
-def commit_branch(branch_id: str, context: dict[str, Any] = Depends(require_workspace_write_access)):
+def commit_branch(
+    branch_id: str,
+    context: dict[str, Any] = Depends(require_workspace_write_access),
+    body: CommitRequest | None = None,
+):
     with _lock:
         item = _branches.get(branch_id)
         if not item or item["status"] != "open" or not _agent_owns(context, item["agent_id"]):
             raise HTTPException(404, "Open branch not found")
         try:
-            snapshot = workspace.commit(item["agent_id"], item["branch"])
+            snapshot = workspace.commit(
+                item["agent_id"], item["branch"],
+                expected_head_version=body.expected_head_version if body else None,
+            )
             item["status"] = "merged"
             item["conflicting_keys"] = []
             _save_api_branch(branch_id, item)
@@ -608,6 +620,9 @@ def commit_branch(branch_id: str, context: dict[str, Any] = Depends(require_work
                 "conflicting_keys": list(exc.conflicting_keys),
                 "head_version": exc.details.get("head_version"),
                 "base_version": exc.details.get("base_version"),
+                "error_code": exc.code,
+                "expected_head_version": exc.details.get("expected_head_version"),
+                "actual_head_version": exc.details.get("actual_head_version"),
             }
 
 

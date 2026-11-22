@@ -72,3 +72,26 @@ def test_concurrent_conflicting_commits_reject_exactly_one_writer(tmp_path):
         actions = [event.action for event in workspace.get_events()]
         assert actions.count("workspace.commit") == 2  # seed + exactly one writer
         assert actions.count("coordination.conflict") == 1
+
+
+def test_compare_and_swap_serializes_across_two_persistent_instances(tmp_path):
+    from cerbere_cohort import ConflictError
+
+    db = tmp_path / "cas-multiprocess.db"
+    first = PersistentWorkspace(db)
+    second = PersistentWorkspace(db)
+    base = first.head.version_id
+    branch_a = first.create_branch("agent-a", "cas-a")
+    branch_b = second.create_branch("agent-b", "cas-b")
+    branch_a.set("record", {"owner": "A"})
+    branch_b.set("record", {"owner": "B"})
+
+    first.commit("agent-a", branch_a, expected_head_version=base)
+    with pytest.raises(ConflictError) as exc:
+        second.commit("agent-b", branch_b, expected_head_version=base)
+
+    assert exc.value.code == "cas_mismatch"
+    assert second.head.data == {"record": {"owner": "A"}}
+    assert any(event.action == "coordination.cas_rejected" for event in second.get_events())
+    first.close()
+    second.close()

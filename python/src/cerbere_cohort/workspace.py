@@ -174,17 +174,63 @@ class Workspace:
         return branch
 
     def commit(self, agent_id: str, branch: Branch, resolver: Optional[Resolver] = None,
-               max_retries: int = 3) -> Snapshot:
+               max_retries: int = 3,
+               expected_head_version: Optional[str] = None) -> Snapshot:
         """Valide une branche : fusion à trois voies, jamais d'écrasement silencieux.
 
         Sans `resolver`, un conflit annule le commit (ConflictError). Avec un résolveur,
         chaque conflit reçoit une décision enregistrée (`coordination.resolved`). Le résolveur
         est appelé HORS du verrou (un humain ou un modèle peut être lent) ; si HEAD a bougé
         pendant ce temps, la fusion est refaite contre le nouveau HEAD (CONCEPTS §4).
+
+        If expected_head_version is supplied, this is a strict compare-and-swap:
+        it must equal the branch's read version and the current HEAD at commit time.
+        A mismatch is journaled and rejected without attempting a three-way merge.
         """
+        if expected_head_version is not None and expected_head_version != branch.base_version:
+            with self._lock:
+                actual_head_version = self._head_version
+                self._events.append(CerbereCohortEvent(
+                    agent_id=agent_id, action="coordination.cas_rejected",
+                    payload={
+                        "branch_name": branch.name,
+                        "expected_head_version": expected_head_version,
+                        "branch_base_version": branch.base_version,
+                        "actual_head_version": actual_head_version,
+                        "reason": "expected_version_does_not_match_branch_base",
+                    },
+                ))
+            raise ConflictError(
+                "CAS refusé : la version attendue ne correspond pas à la version lue par cette branche.",
+                conflicting_keys=[],
+                code="cas_base_mismatch",
+                expected_head_version=expected_head_version,
+                branch_base_version=branch.base_version,
+                actual_head_version=actual_head_version,
+            )
+
         for _ in range(max_retries + 1):
             with self._lock, self._lease_manager.fencing_guard():
                 head = self.head
+                if expected_head_version is not None and head.version_id != expected_head_version:
+                    self._events.append(CerbereCohortEvent(
+                        agent_id=agent_id, action="coordination.cas_rejected",
+                        payload={
+                            "branch_name": branch.name,
+                            "expected_head_version": expected_head_version,
+                            "branch_base_version": branch.base_version,
+                            "actual_head_version": head.version_id,
+                            "reason": "head_version_changed",
+                        },
+                    ))
+                    raise ConflictError(
+                        "CAS refusé : HEAD a changé depuis la lecture. Rechargez l'état et réessayez.",
+                        conflicting_keys=[],
+                        code="cas_mismatch",
+                        expected_head_version=expected_head_version,
+                        actual_head_version=head.version_id,
+                        branch_name=branch.name,
+                    )
                 base = self._snapshots[branch.base_version]
                 self._validate_branch_leases(agent_id, branch, base)
                 base_data = base.data
