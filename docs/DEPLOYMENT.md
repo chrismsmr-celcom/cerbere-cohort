@@ -80,14 +80,14 @@ Vite embeds `VITE_*` values in public browser assets. Never use a service-role k
 ## 4. Verify the deployment
 
 1. Open `https://YOUR-API/api/health`. Confirm `persistence=postgresql`, `authentication=supabase`, `configuration.supabase_url_configured=true`, `configuration.cors_origins_configured=true`, and `single_instance_required=true`.
-2. Open `https://YOUR-API/api/ready`. It must return HTTP 200 with `database`, `supabase_url`, and `cors_origins` checks all true.
+2. Open `https://YOUR-API/api/ready`. It must return HTTP 200 with `database`, `supabase_url`, `supabase_jwks`, and `cors_origins` checks all true.
 3. Open `https://YOUR-API/docs` and inspect the actual OpenAPI schemas.
 4. Sign in through the dashboard. Confirm a non-member receives 403 and an active member can read workspace state.
 5. Create two branches, make conflicting writes, and confirm the second commit reports a conflict instead of silently overwriting the first.
 6. Restart the API and confirm persisted workspace state and open branches are restored.
 7. Confirm Render is running exactly one instance and the deployment logs show no database/JWKS or membership errors.
 
-The health/readiness endpoints report configuration presence and database reachability. They do not validate a real user's JWT or membership; the authenticated end-to-end test is still required.
+The readiness endpoint also fetches the configured Supabase JWKS and confirms signing keys are available. It does not validate a real user's JWT or membership; the authenticated end-to-end test is still required.
 
 ## 5. Current operational limits
 
