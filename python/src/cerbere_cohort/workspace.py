@@ -422,12 +422,9 @@ class Workspace:
 
         resolutions: Dict[str, Optional[str]] = {}
         for key, decision in sorted(decisions.items()):
-            if decision.present:
-                digest: Optional[str] = self._store.put(decision.value)
-                entries[key] = digest  # type: ignore[assignment]
-            else:
-                digest = None
-                entries.pop(key, None)
+            digest: Optional[str] = self._store.put(decision.value) if decision.present else None
+            # The resolved value was already applied to the merged JSON tree by
+            # _apply_resolution_path. Record only its hash here; replay verifies it.
             resolutions[key] = digest
             self._events.append(CerbereCohortEvent(
                 agent_id=agent_id, action="coordination.resolved",
@@ -506,10 +503,19 @@ class Workspace:
                     entries[key] = digest
                 else:
                     raise ReplayError(f"objet {digest[:12]} manquant pour la clé '{key}'")
-            for key, digest in p.get("resolutions", {}).items():
-                if entries.get(key) != digest:
-                    raise ReplayError(f"décision enregistrée incohérente pour '{key}' dans {event.event_id}")
             snapshot = _make_snapshot(entries, parents, store)
+            for key, digest in p.get("resolutions", {}).items():
+                tokens = cls._conflict_path_tokens(key)
+                resolved_value = cls._read_conflict_path(snapshot.data, tokens)
+                if digest is None:
+                    matches = resolved_value is _MISSING
+                else:
+                    matches = (
+                        resolved_value is not _MISSING
+                        and content_hash(resolved_value) == digest
+                    )
+                if not matches:
+                    raise ReplayError(f"décision enregistrée incohérente pour '{key}' dans {event.event_id}")
             if snapshot.version_id != p["version_id"]:
                 raise ReplayError(
                     f"id divergent : journal={str(p['version_id'])[:12]} reconstruit={snapshot.version_id[:12]}"
