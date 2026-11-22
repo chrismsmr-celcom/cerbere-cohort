@@ -6,6 +6,10 @@ export const REPO_URL = "https://github.com/chrismsmr-celcom/cerbere-cohort";
 export const DOCS_URL: string = env.VITE_DOCS_URL || `${REPO_URL}/tree/main/docs`;
 export const FEEDBACK_URL: string = env.VITE_FEEDBACK_URL || "";
 export const PLANS_URL: string = env.VITE_PLANS_URL || "";
+const configuredTimeout = Number(env.VITE_API_TIMEOUT_MS);
+export const API_TIMEOUT_MS = Number.isFinite(configuredTimeout) && configuredTimeout >= 1000
+  ? Math.min(configuredTimeout, 180000)
+  : 90000;
 
 export class ApiError extends Error {
   status: number;
@@ -43,21 +47,23 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
     throw new ApiError("Select a workspace before using the Cohort runtime.", 400);
   }
   const controller = new AbortController();
-  const timer = window.setTimeout(() => controller.abort(), 15000);
+  const timer = window.setTimeout(() => controller.abort(), API_TIMEOUT_MS);
   const started = performance.now();
   let response: Response;
+  let body: any;
   try {
     response = await fetch(`${API_BASE}/api${path}`, { ...init, headers, signal: controller.signal });
+    // Keep the timeout active until the response body has been consumed.
+    body = await response.json().catch(() => ({}));
   } catch (err) {
     record({ path: normalize(path), ms: performance.now() - started, ok: false, at: Date.now() });
     throw new ApiError(err instanceof DOMException && err.name === "AbortError"
-      ? "The API took too long to respond. It may be waking up — retry in a few seconds."
+      ? `The Cohort API did not respond within ${Math.round(API_TIMEOUT_MS / 1000)} seconds. The request may have reached the server; check the result before retrying.`
       : "Unable to reach the Cohort API.", 0);
   } finally {
     window.clearTimeout(timer);
   }
   record({ path: normalize(path), ms: performance.now() - started, ok: response.ok || response.status === 404, at: Date.now() });
-  const body = await response.json().catch(() => ({}));
   if (response.status === 401 && supabase) {
     await supabase.auth.signOut();
     throw new ApiError("Your session has expired. Please sign in again.", 401);
