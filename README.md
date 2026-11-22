@@ -217,7 +217,7 @@ The MCP integration is an early implementation. Its branch registry is currently
 | **SQLite persistence** | Keep local workspace state and event history between runs. |
 | **PostgreSQL adapter** | Run the hosted API with PostgreSQL-backed persistence. |
 
-The REST service is built with FastAPI. In hosted PostgreSQL mode, it validates Supabase JWTs and checks active membership for the organization selected by the request. Each organization is routed to its own PostgreSQL schema.
+The REST service is built with FastAPI. In hosted PostgreSQL mode, it validates Supabase JWTs and checks active membership for the requested organization. Each organization is routed to its own PostgreSQL schema.
 
 ## Deployment
 
@@ -282,9 +282,9 @@ We are working toward stronger coordination across agent runtimes and deployment
 
 - Fencing-token enforcement at the storage boundary to reject writes from stale lease holders.
 - A unified branch and coordination model across REST and MCP.
-- Agent identity and permission controls.
+- More granular agent scopes and delegated permission controls.
 - Document-oriented workspaces and richer shared resources.
-- Multi-organization deployments and multi-instance coordination.
+- Multi-instance coordination behind a shared runtime and branch registry.
 - Broader framework integrations and more useful trace analytics.
 
 These are development directions, not claims about features already shipped. See [docs/CONCEPTS.md](docs/CONCEPTS.md) for design notes and open questions.
