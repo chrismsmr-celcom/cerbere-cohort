@@ -221,3 +221,32 @@ def _ensure_api_test_schema(store):
         )"""
     )
     store._conn.commit()
+
+
+
+def test_conflict_api_reads_encoded_root_key_values_and_presence(tmp_path, monkeypatch):
+    store = PersistentWorkspace(tmp_path / "encoded-conflict.db")
+    key = "json-pointer:/service/status"
+    store.seed({key: "base", "service": {"status": "untouched"}})
+    branch = store.create_branch("agent-a", "api-conflict")
+    concurrent = store.create_branch("agent-b", "concurrent")
+    branch.set(key, "branch-value")
+    concurrent.set(key, "head-value")
+    store.commit("agent-b", concurrent)
+
+    encoded = "root-key:v1:" + __import__("base64").urlsafe_b64encode(key.encode()).decode().rstrip("=")
+    monkeypatch.setattr(api, "workspace", store)
+    monkeypatch.setattr(api, "_branches", {
+        "branch-conflict": {
+            "branch": branch, "agent_id": "agent-a", "status": "open",
+            "conflicting_keys": [encoded], "created_at": "2026-01-01T00:00:00+00:00",
+        }
+    })
+
+    result = api.get_branch_conflict("branch-conflict", context={"principal_type": "user"})
+    conflict = result["conflicts"][0]
+    assert conflict["base"] == "base" and conflict["base_present"] is True
+    assert conflict["head"] == "head-value" and conflict["head_present"] is True
+    assert conflict["branch"] == "branch-value" and conflict["branch_present"] is True
+    assert conflict["key"] == encoded
+    store.close()
