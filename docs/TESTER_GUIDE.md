@@ -53,3 +53,16 @@ Open a [Beta tester feedback issue](https://github.com/chrismsmr-celcom/cerbere-
 - Whether the issue is reproducible.
 
 Remove workspace IDs, emails, tokens, URLs containing secrets, and all sensitive values before submitting logs. A minimal reproducible example with synthetic values is more useful than a full production trace.
+
+## Optional: export events to your observability platform
+
+Workspace owners and admins can connect one OTLP/HTTP logs destination from **Setting → External observability**.
+
+1. In Datadog, create or use an API key and select the OTLP logs intake endpoint for your Datadog site. A common US1 endpoint is `https://otlp.datadoghq.com/v1/logs`; use the matching endpoint for your region.
+2. In Cohort, paste the endpoint and set the authentication header name to `dd-api-key`; paste the API key as its value. For another OTLP backend, use the authentication header required by that backend (for example, `Authorization` with a Bearer token).
+3. Save the destination and select **Send test log**. Confirm that `cohort.export_test` appears in your backend.
+4. Run the two-agent coordination test. New Cohort events should arrive asynchronously in the same logs stream.
+
+Cohort exports OTLP **logs** in this beta, not distributed traces or metrics. The exporter includes event IDs, action/agent metadata and selected coordination metadata. It deliberately excludes shared-state values, prompts, full change payloads and credentials. Credentials are encrypted at rest by the Cohort API. Delivery retries after endpoint failures; the export is at-least-once, so consumers should deduplicate using `cohort.event_id`.
+
+Do not paste API keys into feedback issues, screenshots, or event payloads. Remove the destination from Setting when you finish testing.
