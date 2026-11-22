@@ -283,7 +283,7 @@ def complete_workspace_onboarding(
             """INSERT INTO public.cohort_audit_logs
                (organization_id, actor_user_id, action, target_type, target_id, metadata)
                VALUES (?, ?, 'workspace.onboarding_completed', 'workspace', ?,
-                       jsonb_build_object('account_type', ?, 'email_domain', ?))""",
+                       jsonb_build_object('account_type', ?::text, 'email_domain', ?::text))""",
             (organization_id, user_id, organization_id, body.account_type,
              email.rsplit("@", 1)[-1] if "@" in email else None),
         )
