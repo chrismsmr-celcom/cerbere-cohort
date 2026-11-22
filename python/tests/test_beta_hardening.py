@@ -191,6 +191,7 @@ def test_readiness_checks_database_and_hosted_configuration(monkeypatch):
         "ok": True,
         "checks": {
             "database": True,
+            "membership_table": True,
             "supabase_url": True,
             "supabase_jwks": True,
             "cors_origins": True,
