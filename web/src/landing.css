@@ -177,3 +177,93 @@
 @media (prefers-reduced-motion: reduce) {
   .cohort-site *, .cohort-site *::before, .cohort-site *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; }
 }
+
+
+/* Brand, framework compatibility, pricing and extended footer. */
+.cs-brand-logo { width: 34px; height: 34px; object-fit: contain; display: block; }
+.cs-brand-mark { display: none; }
+.cs-demo-shell { margin-top: 74px; }
+.cs-preview-badge { position: absolute; z-index: 3; top: 10px; right: 12px; display: inline-flex; align-items: center; gap: 7px; padding: 5px 9px; border: 1px solid #8b6dd0; border-radius: 999px; background: #f0eaff; color: #62449e; font: 800 8px/1.2 "Roboto",ui-monospace,monospace; letter-spacing: .06em; }
+.cs-preview-badge > span { width: 6px; height: 6px; border-radius: 50%; background: #8b6dd0; }
+.cs-window-bar { padding-top: 13px; }
+.cs-frameworks { padding-top: 100px; padding-bottom: 90px; }
+.cs-framework-grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 14px; }
+.cs-framework-card { min-height: 112px; display: flex; align-items: center; gap: 16px; padding: 20px; border: 2px solid var(--cs-ink); border-radius: 13px; background: var(--cs-paper); box-shadow: 5px 5px 0 var(--cs-ink); transition: transform .2s,box-shadow .2s; }
+.cs-framework-card:hover { transform: translate(-2px,-3px); box-shadow: 8px 8px 0 var(--cs-ink); }
+.cs-framework-logo { width: 48px; height: 48px; flex: none; display: grid; place-items: center; border: 1px solid var(--cs-line); border-radius: 10px; background: #fff; }
+.cs-framework-logo img { display: block; width: 30px; height: 30px; object-fit: contain; }
+.cs-framework-card > div:nth-child(2) { display: flex; flex-direction: column; gap: 4px; }
+.cs-framework-card strong { font-size: 15px; font-weight: 850; }
+.cs-framework-card span { color: var(--cs-muted); font-size: 10px; line-height: 1.4; }
+.cs-framework-card > svg { margin-left: auto; flex: none; color: var(--cs-muted); }
+.cs-framework-footnote { margin-top: 18px !important; color: var(--cs-muted); font-size: 10px; line-height: 1.6; }
+.cs-destinations { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; margin-top: 30px; padding-top: 24px; border-top: 1px solid var(--cs-line); }
+.cs-destinations > span { width: 100%; margin-bottom: 3px; color: #7058a4; font: 800 9px "Roboto",monospace; letter-spacing: .1em; }
+.cs-destinations i { padding: 7px 10px; border: 1px solid var(--cs-line); border-radius: 7px; background: rgba(255,255,255,.65); color: var(--cs-muted); font-size: 10px; font-style: normal; font-weight: 750; }
+.cs-pricing { padding: 88px 24px; border-top: 2px solid var(--cs-ink); border-bottom: 2px solid var(--cs-ink); background: var(--cs-paper); scroll-margin-top: 88px; }
+.cs-pricing-inner { width: min(940px,100%); display: grid; grid-template-columns: 1.1fr .9fr; align-items: center; gap: 70px; margin: auto; }
+.cs-pricing h2 { margin-top: 16px; font-size: clamp(38px,5vw,57px); font-weight: 900; line-height: 1.02; letter-spacing: -.07em; }
+.cs-pricing h2 em { color: #7358b5; font-style: normal; }
+.cs-pricing-inner > div:first-child p { max-width: 440px; margin-top: 18px; color: var(--cs-muted); font-size: 14px; line-height: 1.8; }
+.cs-price-card { padding: 25px; border: 2px solid var(--cs-ink); border-radius: 14px; background: #f4efff; box-shadow: 7px 7px 0 var(--cs-ink); }
+.cs-price-label { color: #7058a4; font: 800 9px "Roboto",monospace; letter-spacing: .12em; }
+.cs-price { margin-top: 12px; font-size: 52px; font-weight: 900; letter-spacing: -.07em; }
+.cs-price small { color: var(--cs-muted); font-size: 12px; font-weight: 700; letter-spacing: 0; }
+.cs-price-card ul { display: grid; gap: 12px; margin: 18px 0 22px; padding: 0; list-style: none; }
+.cs-price-card li { display: flex; align-items: center; gap: 8px; color: var(--cs-muted); font-size: 11px; font-weight: 700; }
+.cs-price-card li svg { flex: none; color: #267b59; }
+.cs-blog { width: min(1080px,100%); display: flex; justify-content: space-between; align-items: center; gap: 25px; margin: auto; padding: 65px 24px; }
+.cs-blog h2 { margin-top: 10px; font-size: clamp(24px,3vw,34px); font-weight: 850; letter-spacing: -.055em; }
+.cs-blog p { margin-top: 7px; color: var(--cs-muted); font-size: 12px; }
+.cs-blog .cs-text-link { flex: none; margin-top: 0; }
+.cs-footer { width: 100%; display: block; padding: 0; border-top: 2px solid var(--cs-ink); background: #17151d; color: #fffdf8; }
+.cs-footer-top,.cs-footer-columns,.cs-footer-bottom { width: min(1160px,100%); margin: auto; padding-left: 24px; padding-right: 24px; }
+.cs-footer-top { display: flex; justify-content: space-between; align-items: flex-end; gap: 25px; padding-top: 52px; padding-bottom: 43px; border-bottom: 1px solid rgba(255,255,255,.17); }
+.cs-footer-wordmark { display: inline-flex; align-items: center; gap: 13px; font-size: clamp(52px,9vw,106px); font-weight: 900; line-height: .9; letter-spacing: -.09em; transition: transform .25s ease; transform-origin: left center; }
+.cs-footer-wordmark:hover,.cs-footer-wordmark:focus-visible { transform: translateY(-5px) rotate(-1deg); }
+.cs-footer-wordmark img { width: clamp(44px,6vw,68px); height: clamp(44px,6vw,68px); object-fit: contain; }
+.cs-footer-mark-arrow { margin-left: 4px; color: var(--cs-yellow); transition: transform .25s ease; }
+.cs-footer-wordmark:hover .cs-footer-mark-arrow { transform: translate(5px,-5px); }
+.cs-footer-top > p { color: #b8b1c4; font-size: 11px; line-height: 1.8; text-align: right; }
+.cs-footer-columns { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 35px; padding-top: 37px; padding-bottom: 42px; }
+.cs-footer-columns > div { display: flex; flex-direction: column; align-items: flex-start; gap: 12px; }
+.cs-footer-columns strong { margin-bottom: 4px; color: #a99bc5; font: 800 9px "Roboto",monospace; letter-spacing: .12em; text-transform: uppercase; }
+.cs-footer-columns a { display: inline-flex; align-items: center; gap: 6px; color: #e6e0ee; font-size: 11px; transition: color .15s,transform .15s; }
+.cs-footer-columns a:hover { color: var(--cs-yellow); transform: translateX(3px); }
+.cs-draft-tag { padding: 2px 4px; border: 1px solid #786d88; border-radius: 3px; color: #c3b9d1; font: 700 7px "Roboto",monospace; letter-spacing: .05em; }
+.cs-footer-bottom { display: flex; justify-content: space-between; gap: 15px; padding-top: 17px; padding-bottom: 19px; border-top: 1px solid rgba(255,255,255,.17); color: #a9a1b4; font-size: 9px; }
+.cs-footer-bottom a { color: #fffdf8; font-weight: 800; }
+.cs-footer-bottom a:hover { color: var(--cs-yellow); }
+@media (max-width: 900px) {
+  .cs-framework-grid { grid-template-columns: 1fr; }
+  .cs-pricing-inner { gap: 35px; }
+  .cs-footer-columns { gap: 25px; }
+}
+@media (max-width: 680px) {
+  .cs-brand-logo { width: 29px; height: 29px; }
+  .cs-demo-shell { margin-top: 62px; }
+  .cs-preview-badge { top: 7px; right: 7px; font-size: 6px; }
+  .cs-window-bar { padding-top: 17px; }
+  .cs-frameworks { padding-top: 72px; padding-bottom: 68px; }
+  .cs-framework-card { min-height: 90px; padding: 14px; }
+  .cs-framework-logo { width: 42px; height: 42px; }
+  .cs-pricing { padding: 65px 18px; }
+  .cs-pricing-inner { grid-template-columns: 1fr; gap: 28px; }
+  .cs-price-card { padding: 20px; }
+  .cs-blog { display: block; padding: 52px 18px; }
+  .cs-blog .cs-text-link { margin-top: 18px; }
+  .cs-footer-top { display: block; padding-top: 40px; padding-bottom: 28px; }
+  .cs-footer-wordmark { font-size: 62px; }
+  .cs-footer-top > p { margin-top: 18px; text-align: left; }
+  .cs-footer-columns { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 30px 18px; padding-top: 30px; padding-bottom: 32px; }
+  .cs-footer-bottom { flex-wrap: wrap; padding-left: 18px; padding-right: 18px; }
+  .cs-footer-bottom > span:nth-child(2) { width: 100%; order: 3; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cs-framework-card,.cs-footer-wordmark,.cs-footer-mark-arrow,.cs-footer-columns a { transition: none !important; }
+}
+
+.cs-connection-methods { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; margin-top: 24px; color: var(--cs-muted); }
+.cs-connection-methods > span { width: 100%; margin-bottom: 2px; color: #7058a4; font: 800 9px "Roboto",monospace; letter-spacing: .1em; }
+.cs-connection-methods strong { font-size: 11px; font-weight: 850; }
+.cs-connection-methods i { width: 4px; height: 4px; border-radius: 50%; background: #9a8eaa; }
