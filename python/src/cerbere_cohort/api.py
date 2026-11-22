@@ -601,9 +601,9 @@ def get_branch_diff(branch_id: str, context: dict[str, Any] = Depends(require_wo
 def create_branch(body: BranchCreate, context: dict[str, Any] = Depends(require_workspace_write_access)):
     _require_agent_identity(context, body.agent_id)
     branch_id = str(uuid.uuid4())
-    previous_event_ids = _event_ids()
     try:
         with _lock:
+            previous_event_ids = _event_ids()
             branch = workspace.create_branch(body.agent_id, body.name)
             _stamp_event_actor(context, previous_event_ids)
     except Exception as exc:
@@ -804,10 +804,11 @@ def get_leases(context: dict[str, Any] = Depends(require_lease_read_access)):
 @app.post("/api/leases", status_code=201)
 def acquire_lease(body: LeaseRequest, context: dict[str, Any] = Depends(require_lease_write_access)):
     _require_agent_identity(context, body.agent_id)
-    previous_event_ids = _event_ids()
     try:
-        lease = workspace.acquire_lease(body.agent_id, body.key, body.duration_seconds)
-        _stamp_event_actor(context, previous_event_ids)
+        with _lock:
+            previous_event_ids = _event_ids()
+            lease = workspace.acquire_lease(body.agent_id, body.key, body.duration_seconds)
+            _stamp_event_actor(context, previous_event_ids)
     except LeaseError as exc:
         raise HTTPException(409, detail={"message": str(exc), "code": exc.code, "details": exc.details}) from exc
     return {
@@ -822,10 +823,11 @@ def acquire_lease(body: LeaseRequest, context: dict[str, Any] = Depends(require_
 @app.delete("/api/leases/{key:path}")
 def release_lease(key: str, agent_id: str, context: dict[str, Any] = Depends(require_lease_write_access)):
     _require_agent_identity(context, agent_id)
-    previous_event_ids = _event_ids()
     try:
-        workspace.release_lease(agent_id, key)
-        _stamp_event_actor(context, previous_event_ids)
+        with _lock:
+            previous_event_ids = _event_ids()
+            workspace.release_lease(agent_id, key)
+            _stamp_event_actor(context, previous_event_ids)
     except LeaseError as exc:
         raise HTTPException(409, detail={"message": str(exc), "code": exc.code}) from exc
     return {"ok": True}
