@@ -69,7 +69,9 @@ class CerbereCohortEvent(BaseModel):
     @classmethod
     def _attach_authenticated_actor(cls, value: Any) -> Any:
         actor = _current_event_actor.get()
-        if actor is None or not isinstance(value, dict):
+        # Persisted/replayed events always carry their event_id. Never apply the
+        # current request actor to historical records during workspace reload.
+        if actor is None or not isinstance(value, dict) or "event_id" in value:
             return value
         value = dict(value)
         metadata = dict(value.get("metadata") or {})
