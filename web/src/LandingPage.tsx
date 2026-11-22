@@ -22,9 +22,9 @@ const capabilities = [
 ];
 
 const frameworks = [
-  { name: "LangGraph", note: "Graph-based agent workflows", logo: "https://cdn.simpleicons.org/langchain/1C3C3C", href: "https://www.langchain.com/langgraph" },
+  { name: "LangGraph", note: "Graph-based agent workflows", logo: "https://cdn.prod.website-files.com/65b8cd72835ceeacd4449a53/6a994264a64b3afcdd880f6b_LangGraph_OSS%20Lockup_light%201.svg", href: "https://www.langchain.com/langgraph" },
   { name: "CrewAI", note: "Role-based agent teams", logo: "https://cdn.simpleicons.org/crewai/FF5A5F", href: "https://www.crewai.com/" },
-  { name: "AutoGen", note: "Microsoft agent framework · legacy", logo: "https://cdn.simpleicons.org/microsoft/5E5E5E", href: "https://github.com/microsoft/autogen" },
+  { name: "OpenAI Agents SDK", note: "Agent orchestration SDK", logo: "https://cdn.simpleicons.org/openai/000000", href: "https://openai.github.io/openai-agents-python/" },
 ];
 
 const destinations = ["OpenTelemetry · OTLP/HTTP", "Splunk · HEC", "Datadog", "Microsoft Sentinel", "Elasticsearch"];
@@ -179,6 +179,10 @@ export default function LandingPage() {
               </a>
             ))}
           </div>
+          <div className="cs-frameworks-secondary">
+            <span>ALSO SUPPORTED</span>
+            <a href="https://github.com/microsoft/autogen" target="_blank" rel="noreferrer">AutoGen <small>· archived by Microsoft</small> <ArrowUpRight size={12} /></a>
+          </div>
           <p className="cs-framework-footnote">Framework logos are trademarks of their respective owners. Connections are made through Cohort's public interfaces; these are not vendor-certified integrations.</p>
           <div className="cs-connection-methods"><span>CONNECT THROUGH</span><strong>Python SDK</strong><i /><strong>REST API</strong><i /><strong>MCP</strong></div>
           <div className="cs-destinations">
@@ -220,10 +224,9 @@ export default function LandingPage() {
 
       <footer className="cs-footer">
         <div className="cs-footer-top">
-          <a className="cs-footer-wordmark" href="#top" aria-label="Back to Cohort home">
+          <a className="cs-footer-brand" href="#top" aria-label="Back to Cohort home">
             <img src={cohortLogo} alt="" />
             <span>cohort</span>
-            <ArrowUpRight className="cs-footer-mark-arrow" size={26} />
           </a>
           <p>Coordination infrastructure for AI agents.<br />Independent agents. Shared rules. Reliable work.</p>
         </div>
@@ -234,6 +237,10 @@ export default function LandingPage() {
           <div><strong>Contact</strong><a href="mailto:christopher-ag@cerbereag.site"><Mail size={14} /> christopher-ag@cerbereag.site</a><a href="https://github.com/chrismsmr-celcom/cerbere-cohort" target="_blank" rel="noreferrer"><Github size={14} /> Open-source project</a></div>
         </div>
         <div className="cs-footer-bottom"><span>© {new Date().getFullYear()} Cohort by Cerbère.</span><span>Built for teams of agents that need to work together.</span><a href="#top">Back to top ↑</a></div>
+        <a className="cs-footer-monument" href="#top" aria-label="Cohort — back to top">
+          <span aria-hidden="true">Cohort</span>
+          <small>SCROLL BACK TO THE TOP ↗</small>
+        </a>
       </footer>
     </div>
   );
