@@ -11,7 +11,8 @@
   --cs-blue: #a9caff;
   --cs-pink: #ffc1dc;
   min-height: 100vh;
-  overflow-x: clip;\n  overflow-y: visible;
+  overflow-x: clip;
+  overflow-y: visible;
   background: var(--cs-bg);
   color: var(--cs-ink);
   font-family: "Manrope Variable", Manrope, system-ui, sans-serif;
@@ -314,3 +315,15 @@
   .cs-footer-monument > span { animation: none !important; transition: none !important; }
   .cs-footer-monument > small { transition: none !important; }
 }
+
+
+/* Lightweight destination pages linked from the public landing footer. */
+.cs-info-page { min-height:100vh; padding:28px 24px 70px; background:var(--cs-bg); color:var(--cs-ink); font-family:"Manrope Variable",Manrope,system-ui,sans-serif; }
+.cs-info-brand { display:flex; align-items:center; gap:10px; width:fit-content; font-size:22px; font-weight:850; letter-spacing:-.06em; }
+.cs-info-brand img { width:34px; height:34px; object-fit:contain; }
+.cs-info-card { width:min(680px,100%); margin:clamp(70px,13vh,150px) auto 0; padding:clamp(25px,5vw,48px); border:2px solid var(--cs-ink); border-radius:16px; background:var(--cs-paper); box-shadow:8px 8px 0 var(--cs-ink); }
+.cs-info-card h1 { margin-top:14px; font-size:clamp(35px,6vw,58px); line-height:1.05; letter-spacing:-.065em; }
+.cs-info-card p { margin-top:18px; color:var(--cs-muted); line-height:1.8; }
+.cs-info-actions { display:flex; align-items:center; flex-wrap:wrap; gap:18px; margin-top:28px; }
+.cs-info-back { display:inline-flex; align-items:center; gap:6px; font-size:12px; font-weight:750; }
+.cs-info-card > small { display:block; margin-top:28px; color:var(--cs-muted); font-size:10px; }
