@@ -1,8 +1,7 @@
 <div align="center">
 
-<img src="docs/cohortgif.gif" alt="Cohort" width="120" />
+<img src="docs/cohortgif.gif" alt="Cohort" />
 
-# Cohort
 
 **Coordinate your AI agents. Make every agent count.**
 
