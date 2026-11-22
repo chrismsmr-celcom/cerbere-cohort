@@ -250,3 +250,50 @@ def test_root_key_that_looks_like_json_pointer_is_not_parsed_as_nested_path():
     assert resolution.payload["key"].startswith("root-key:")
     replayed = Workspace.replay(ws.get_events(), ws.store)
     assert replayed.head.data == ws.head.data
+
+
+def test_commit_compare_and_swap_accepts_exact_read_version():
+    ws = Workspace()
+    ws.seed({"counter": 0})
+    branch = ws.create_branch("agent-a", "cas-success")
+    expected = branch.base_version
+    branch.set("counter", 1)
+
+    committed = ws.commit("agent-a", branch, expected_head_version=expected)
+
+    assert committed.data["counter"] == 1
+    assert committed.version_id == ws.head.version_id
+
+
+def test_commit_compare_and_swap_rejects_stale_read_without_merging():
+    ws = Workspace()
+    ws.seed({"counter": 0, "other": "base"})
+    stale = ws.create_branch("agent-a", "cas-stale")
+    winner = ws.create_branch("agent-b", "winner")
+    stale.set("counter", 1)
+    winner.set("other", "changed")
+    ws.commit("agent-b", winner)
+    current = ws.head.version_id
+
+    with pytest.raises(ConflictError) as exc:
+        ws.commit("agent-a", stale, expected_head_version=stale.base_version)
+
+    assert exc.value.code == "cas_mismatch"
+    assert exc.value.details["expected_head_version"] == stale.base_version
+    assert exc.value.details["actual_head_version"] == current
+    assert ws.head.version_id == current
+    assert ws.head.data == {"counter": 0, "other": "changed"}
+    assert any(event.action == "coordination.cas_rejected" for event in ws.get_events())
+
+
+def test_commit_compare_and_swap_requires_branch_read_version():
+    ws = Workspace()
+    ws.seed({"k": "v"})
+    branch = ws.create_branch("agent-a", "wrong-read-token")
+    branch.set("k", "new")
+
+    with pytest.raises(ConflictError) as exc:
+        ws.commit("agent-a", branch, expected_head_version="f" * 64)
+
+    assert exc.value.code == "cas_base_mismatch"
+    assert ws.head.data == {"k": "v"}
