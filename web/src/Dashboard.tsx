@@ -28,7 +28,7 @@ const stored = <T extends string>(key: string, allowed: T[], fallback: T): T => 
 
 type Modalish = { kind: "create" } | { kind: "resolve"; branch: Branch } | { kind: "write"; branch: Branch } | { kind: "diff"; branch: Branch } | { kind: "plans" } | { kind: "cerbere" } | { kind: "palette" } | { kind: "inspector"; index: number } | null;
 
-function Shell({ userEmail, onSignOut, workspaces, activeWorkspace, onWorkspaceChange }: { userEmail?: string; onSignOut?: () => void; workspaces?: CohortWorkspace[]; activeWorkspace?: CohortWorkspace; onWorkspaceChange?: (id: string) => void }) {
+function Shell({ userEmail, onSignOut, workspaces, activeWorkspace, onWorkspaceChange, onWorkspaceProfileChange }: { userEmail?: string; onSignOut?: () => void; workspaces?: CohortWorkspace[]; activeWorkspace?: CohortWorkspace; onWorkspaceChange?: (id: string) => void; onWorkspaceProfileChange?: (profile: { id: string; name: string }) => void }) {
   const toast = useToast();
   const { data, refresh } = useCohort();
   const cerbere = useOptional<CerbereSummary>("/cerbere/summary?window=24h", 60000);
