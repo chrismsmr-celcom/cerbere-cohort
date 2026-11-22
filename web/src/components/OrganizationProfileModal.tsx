@@ -132,12 +132,12 @@ export default function OrganizationProfileModal({ workspace, onClose, onSaved }
               <strong>Organization logo</strong>
               <small>PNG, JPEG or WebP · up to 2 MB</small>
               {canEdit && <div className="org-profile-actions">
-                <label className="btn btn-secondary btn-sm org-upload-label">
+                <label className="btn btn-secondary org-btn-sm org-upload-label">
                   {uploading ? <LoaderCircle size={14} className="spin" /> : <ImagePlus size={14} />}
                   {uploading ? "Uploading…" : "Upload logo"}
                   <input type="file" accept="image/png,image/jpeg,image/webp" disabled={uploading} onChange={uploadLogo} />
                 </label>
-                {profile.logo_url && <button className="btn btn-ghost btn-sm" type="button" onClick={() => change("logo_url", null)}><Trash2 size={14} /> Remove</button>}
+                {profile.logo_url && <button className="btn btn-secondary org-btn-sm" type="button" onClick={() => change("logo_url", null)}><Trash2 size={14} /> Remove</button>}
               </div>}
             </div>
           </div>
