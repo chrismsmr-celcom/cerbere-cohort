@@ -30,7 +30,7 @@ CREATE POLICY cohort_org_logo_insert ON storage.objects
         AND (storage.foldername(name))[1] ~* '^[0-9a-f-]{36}$'
         AND EXISTS (
             SELECT 1 FROM public.cohort_memberships m
-            WHERE m.organization_id = ((storage.foldername(name))[1])::uuid
+            WHERE m.organization_id::text = (storage.foldername(name))[1]
               AND m.user_id = auth.uid()
               AND m.status = 'active'
               AND m.role IN ('owner', 'admin')
@@ -44,7 +44,7 @@ CREATE POLICY cohort_org_logo_update ON storage.objects
         bucket_id = 'cohort-organization-logos'
         AND EXISTS (
             SELECT 1 FROM public.cohort_memberships m
-            WHERE m.organization_id = ((storage.foldername(name))[1])::uuid
+            WHERE m.organization_id::text = (storage.foldername(name))[1]
               AND m.user_id = auth.uid()
               AND m.status = 'active'
               AND m.role IN ('owner', 'admin')
@@ -54,7 +54,7 @@ CREATE POLICY cohort_org_logo_update ON storage.objects
         bucket_id = 'cohort-organization-logos'
         AND EXISTS (
             SELECT 1 FROM public.cohort_memberships m
-            WHERE m.organization_id = ((storage.foldername(name))[1])::uuid
+            WHERE m.organization_id::text = (storage.foldername(name))[1]
               AND m.user_id = auth.uid()
               AND m.status = 'active'
               AND m.role IN ('owner', 'admin')
@@ -68,7 +68,7 @@ CREATE POLICY cohort_org_logo_delete ON storage.objects
         bucket_id = 'cohort-organization-logos'
         AND EXISTS (
             SELECT 1 FROM public.cohort_memberships m
-            WHERE m.organization_id = ((storage.foldername(name))[1])::uuid
+            WHERE m.organization_id::text = (storage.foldername(name))[1]
               AND m.user_id = auth.uid()
               AND m.status = 'active'
               AND m.role IN ('owner', 'admin')
