@@ -120,13 +120,13 @@ class _Connection:
                 # Rewrite only the legacy persistence TABLE reference, never
                 # identically named columns in unrelated Cohort tables.
                 statement = re.sub(
-                    r"((?:\\b(?:FROM|JOIN|INTO|UPDATE)\\s+)|(?:\\bTABLE\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?))metadata\\b",
+                    r"((?:\b(?:FROM|JOIN|INTO|UPDATE)\s+)|(?:\bTABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?))metadata\b",
                     lambda match: match.group(1) + target,
                     statement,
                     flags=re.I,
                 )
             else:
-                statement = re.sub(rf"\\b{source}\\b", target, statement, flags=re.I)
+                statement = re.sub(rf"\b{source}\b", target, statement, flags=re.I)
         statement = re.sub(r"ORDER\s+BY\s+rowid", "ORDER BY seq", statement, flags=re.I)
         counter_table = "cohort_lease_counters" if schema == "public" else f"{schema}.cohort_lease_counters"
         statement = statement.replace(
