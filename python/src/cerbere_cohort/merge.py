@@ -4,11 +4,13 @@ Objects (JSON dictionaries) merge recursively. Arrays and scalar values are
 atomic: concurrent divergent edits to the same value conflict rather than
 being guessed or reordered.
 """
+from base64 import urlsafe_b64encode
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
 from .errors import CerbereError
+from .hashing import canonical_json
 
 _ABSENT = object()
 
@@ -16,6 +18,13 @@ _ABSENT = object()
 def _clone(value: Any) -> Any:
     """Copy JSON values without cloning the identity-based absence sentinel."""
     return _ABSENT if value is _ABSENT else deepcopy(value)
+
+
+def _same(left: Any, right: Any) -> bool:
+    """Compare JSON values using canonical types, not Python's bool/int equality."""
+    if left is _ABSENT or right is _ABSENT:
+        return left is right
+    return canonical_json(left) == canonical_json(right)
 
 
 class ConflictError(CerbereError):
@@ -45,7 +54,13 @@ class MergeResult:
 def _conflict_path(tokens: Tuple[str, ...]) -> str:
     """Keep legacy root-key names; encode nested paths as JSON Pointers."""
     if len(tokens) == 1:
-        return tokens[0]
+        key = tokens[0]
+        # Reserve both path prefixes. Root keys using either prefix are encoded
+        # so they can never be mistaken for nested JSON Pointer conflicts.
+        if key.startswith(("json-pointer:/", "root-key:")):
+            encoded = urlsafe_b64encode(key.encode("utf-8")).decode("ascii").rstrip("=")
+            return "root-key:" + encoded
+        return key
     escaped = (part.replace("~", "~0").replace("/", "~1") for part in tokens)
     return "json-pointer:/" + "/".join(escaped)
 
@@ -58,9 +73,9 @@ def _merge_node(
     conflicts: List[str],
 ) -> Any:
     """Merge one JSON node, returning the merged value or _ABSENT."""
-    if mine == base:
+    if _same(mine, base):
         return _clone(head)
-    if head == base or head == mine:
+    if _same(head, base) or _same(head, mine):
         return _clone(mine)
 
     # Recurse only through JSON objects. Arrays remain atomic because index
