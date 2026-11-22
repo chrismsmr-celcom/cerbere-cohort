@@ -221,6 +221,7 @@ The REST service is built with FastAPI. In hosted PostgreSQL mode, it validates 
 ## Deployment
 
 - [Deploy the SaaS beta](docs/DEPLOYMENT.md) — Vercel, Render, Supabase, environment variables, and verification.
+- [Closed beta tester guide](docs/TESTER_GUIDE.md) — safe test scope, the multi-agent golden path, known limits, and feedback reporting.
 - [Self-host Cohort Community](docs/SELF_HOSTING.md) — Docker Compose with local SQLite.
 - [Traction measurement](docs/TRACTION.md) — GitHub clone archive, opt-in installation telemetry, and product adoption metrics.
 
