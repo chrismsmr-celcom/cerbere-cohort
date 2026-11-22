@@ -648,10 +648,10 @@ def _application_schema_ready(connection) -> bool:
 def _onboarding_trigger_ready(connection) -> bool:
     row = connection.execute(
         "SELECT EXISTS (SELECT 1 FROM pg_trigger "
-        "WHERE tgname = ? AND tgrelid = 'auth.users'::regclass
-          AND tgenabled IN ('O', 'A')
-          AND (tgtype & 4) = 4 AND (tgtype & 1) = 1
-          AND NOT tgisinternal)",
+        "WHERE tgname = ? AND tgrelid = 'auth.users'::regclass "
+        "AND tgenabled IN ('O', 'A') "
+        "AND (tgtype & 4) = 4 AND (tgtype & 1) = 1 "
+        "AND NOT tgisinternal)",
         ("cohort_auth_user_workspace_bootstrap",),
     ).fetchone()
     return bool(row and row[0])
