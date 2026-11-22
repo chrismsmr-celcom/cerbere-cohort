@@ -32,6 +32,7 @@ export default function OrganizationProfileModal({ workspace, onClose, onSaved }
 }) {
   const [profile, setProfile] = useState<Profile>(() => emptyProfile(workspace));
   const [loading, setLoading] = useState(true);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState("");
@@ -42,7 +43,7 @@ export default function OrganizationProfileModal({ workspace, onClose, onSaved }
     let active = true;
     void api<{ profile: Profile }>("/workspace/profile")
       .then((result) => { if (active) { setProfile({ ...emptyProfile(workspace), ...result.profile }); setInitialLogoUrl(result.profile.logo_url || null); } })
-      .catch((err) => { if (active) setError(err instanceof Error ? err.message : "Unable to load organization profile."); })
+      .catch((err) => { if (active) { setLoadFailed(true); setError(err instanceof Error ? err.message : "Unable to load organization profile."); } })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, [workspace.id]);
@@ -87,7 +88,7 @@ export default function OrganizationProfileModal({ workspace, onClose, onSaved }
 
   async function save(event: FormEvent) {
     event.preventDefault();
-    if (!canEdit || saving) return;
+    if (!canEdit || loadFailed || saving) return;
     setSaving(true);
     setError("");
     try {
@@ -139,7 +140,7 @@ export default function OrganizationProfileModal({ workspace, onClose, onSaved }
             <div className="org-profile-logo-actions">
               <strong>Organization logo</strong>
               <small>PNG, JPEG or WebP · up to 2 MB</small>
-              {canEdit && <div className="org-profile-actions">
+              {canEdit && !loadFailed && <div className="org-profile-actions">
                 <label className="btn btn-secondary org-btn-sm org-upload-label">
                   {uploading ? <LoaderCircle size={14} className="spin" /> : <ImagePlus size={14} />}
                   {uploading ? "Uploading…" : "Upload logo"}
@@ -151,28 +152,28 @@ export default function OrganizationProfileModal({ workspace, onClose, onSaved }
           </div>
           <div className="org-profile-fields">
             <label className="field">Organization name
-              <input required maxLength={120} disabled={!canEdit} value={profile.name} onChange={(e) => change("name", e.target.value)} />
+              <input required maxLength={120} disabled={!canEdit || loadFailed} value={profile.name} onChange={(e) => change("name", e.target.value)} />
             </label>
             <label className="field">Legal name <span className="muted">(optional)</span>
-              <input maxLength={160} disabled={!canEdit} value={profile.legal_name || ""} onChange={(e) => change("legal_name", e.target.value || null)} placeholder="Registered company name" />
+              <input maxLength={160} disabled={!canEdit || loadFailed} value={profile.legal_name || ""} onChange={(e) => change("legal_name", e.target.value || null)} placeholder="Registered company name" />
             </label>
             <label className="field org-profile-full">Description <span className="muted">(optional)</span>
-              <textarea rows={3} maxLength={500} disabled={!canEdit} value={profile.description || ""} onChange={(e) => change("description", e.target.value || null)} placeholder="What does your organization do?" />
+              <textarea rows={3} maxLength={500} disabled={!canEdit || loadFailed} value={profile.description || ""} onChange={(e) => change("description", e.target.value || null)} placeholder="What does your organization do?" />
             </label>
             <label className="field">Website
-              <input type="url" maxLength={240} disabled={!canEdit} value={profile.website || ""} onChange={(e) => change("website", e.target.value || null)} placeholder="https://example.com" />
+              <input type="url" maxLength={240} disabled={!canEdit || loadFailed} value={profile.website || ""} onChange={(e) => change("website", e.target.value || null)} placeholder="https://example.com" />
             </label>
             <label className="field">Industry
-              <input maxLength={80} disabled={!canEdit} value={profile.industry || ""} onChange={(e) => change("industry", e.target.value || null)} placeholder="Software / Technology" />
+              <input maxLength={80} disabled={!canEdit || loadFailed} value={profile.industry || ""} onChange={(e) => change("industry", e.target.value || null)} placeholder="Software / Technology" />
             </label>
             <label className="field">Country
-              <input maxLength={80} disabled={!canEdit} value={profile.country || ""} onChange={(e) => change("country", e.target.value || null)} placeholder="Country" />
+              <input maxLength={80} disabled={!canEdit || loadFailed} value={profile.country || ""} onChange={(e) => change("country", e.target.value || null)} placeholder="Country" />
             </label>
             <label className="field">Business email
-              <input type="email" maxLength={254} disabled={!canEdit} value={profile.contact_email || ""} onChange={(e) => change("contact_email", e.target.value || null)} placeholder="team@example.com" />
+              <input type="email" maxLength={254} disabled={!canEdit || loadFailed} value={profile.contact_email || ""} onChange={(e) => change("contact_email", e.target.value || null)} placeholder="team@example.com" />
             </label>
             <label className="field org-profile-color">Brand color <span className="muted">(optional)</span>
-              <span className="org-color-control"><input type="color" disabled={!canEdit} value={profile.brand_color || "#8062c8"} onChange={(e) => change("brand_color", e.target.value)} /><input aria-label="Hex brand color" disabled={!canEdit} maxLength={7} pattern="^#[0-9A-Fa-f]{6}$" value={profile.brand_color || ""} onChange={(e) => change("brand_color", e.target.value || null)} placeholder="#8062C8" /></span>
+              <span className="org-color-control"><input type="color" disabled={!canEdit || loadFailed} value={profile.brand_color || "#8062c8"} onChange={(e) => change("brand_color", e.target.value)} /><input aria-label="Hex brand color" disabled={!canEdit || loadFailed} maxLength={7} pattern="^#[0-9A-Fa-f]{6}$" value={profile.brand_color || ""} onChange={(e) => change("brand_color", e.target.value || null)} placeholder="#8062C8" /></span>
             </label>
           </div>
           {!canEdit && <p className="org-profile-readonly">Only workspace owners and admins can edit this profile.</p>}
@@ -180,7 +181,7 @@ export default function OrganizationProfileModal({ workspace, onClose, onSaved }
         </div>
         <footer className="modal-f">
           <button className="btn btn-secondary" type="button" onClick={onClose}>Close</button>
-          {canEdit && <button className="btn btn-primary" type="submit" disabled={saving || uploading || !profile.name.trim()}>{saving ? "Saving…" : "Save changes"}</button>}
+          {canEdit && <button className="btn btn-primary" type="submit" disabled={saving || uploading || loadFailed || !profile.name.trim()}>{saving ? "Saving…" : "Save changes"}</button>}
         </footer>
       </form>}
     </section>
