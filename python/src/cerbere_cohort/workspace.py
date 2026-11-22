@@ -287,8 +287,8 @@ class Workspace:
 
     @staticmethod
     def _conflict_path_tokens(path: str) -> Tuple[str, ...]:
-        if path.startswith("root-key:"):
-            encoded = path[len("root-key:"):]
+        if path.startswith("root-key:v1:"):
+            encoded = path[len("root-key:v1:"): ]
             encoded += "=" * (-len(encoded) % 4)
             try:
                 return (base64.urlsafe_b64decode(encoded.encode("ascii")).decode("utf-8"),)
