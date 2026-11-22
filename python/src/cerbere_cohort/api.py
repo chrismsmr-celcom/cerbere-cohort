@@ -44,9 +44,6 @@ from cerbere_cohort import (
 )
 from cerbere_cohort.persistence import PersistentWorkspace
 
-if DATABASE_URL:
-    from psycopg.types.json import Jsonb
-
 DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
 DB_PATH = Path(os.getenv("COHORT_DB_PATH", "./data/cohort.db"))
 if DATABASE_URL and not DATABASE_URL.startswith(("postgres://", "postgresql://")):
@@ -246,7 +243,7 @@ def complete_workspace_onboarding(
                 (body.workspace_name, body.account_type,
                  body.company_size if body.account_type != "individual" else None,
                  body.industry, body.primary_use_case, body.expected_agents,
-                 Jsonb(body.frameworks), organization_id),
+                 body.frameworks, organization_id),
             )
         else:
             created = _membership_connection.execute(
