@@ -14,6 +14,9 @@ from .merge import ConflictError, detect_and_merge
 from .resolve import Conflict, Resolution, ResolutionError, Resolver, Side
 
 
+_MISSING = object()
+
+
 class ReplayError(CerbereError):
     """Le journal ne permet pas de reconstruire fidèlement l'état."""
     code = "replay_error"
@@ -183,13 +186,26 @@ class Workspace:
                 head = self.head
                 base = self._snapshots[branch.base_version]
                 self._validate_branch_leases(agent_id, branch, base)
-                branch_entries = {key: content_hash(value) for key, value in branch.current_data.items()}
-                result = detect_and_merge(base.entries, branch_entries, head.entries)
+                base_data = base.data
+                head_data = head.data
+                branch_data = copy.deepcopy(branch.current_data)
+                branch_entries = {key: content_hash(value) for key, value in branch_data.items()}
+                result = detect_and_merge(base_data, branch_data, head_data)
                 if result.success:
-                    return self._finalize(agent_id, branch, base, head, branch_entries, result.merged_data, {}, None)
+                    merged_entries = {
+                        key: self._store.put(value)
+                        for key, value in (result.merged_data or {}).items()
+                    }
+                    return self._finalize(
+                        agent_id, branch, base, head, branch_entries, merged_entries, {}, None
+                    )
 
-                conflicts = [self._build_conflict(key, agent_id, branch, base, head, branch_entries)
-                             for key in result.conflicting_keys]
+                conflicts = [
+                    self._build_conflict(
+                        key, agent_id, branch, base_data, branch_data, head_data
+                    )
+                    for key in result.conflicting_keys
+                ]
                 self._events.append(CerbereCohortEvent(
                     agent_id=agent_id, action="coordination.conflict",
                     payload={"branch_name": branch.name, "base_version": branch.base_version,
@@ -216,8 +232,16 @@ class Workspace:
                 # The resolver ran outside the lock: the lease may have expired or
                 # been taken over while it was deciding. Revalidate before committing.
                 self._validate_branch_leases(agent_id, branch, base)
-                return self._finalize(agent_id, branch, base, head, branch_entries,
-                                      result.merged_data, decisions, resolver.name)
+                resolved_data = copy.deepcopy(result.merged_data or {})
+                for path, decision in decisions.items():
+                    self._apply_resolution_path(resolved_data, path, decision)
+                merged_entries = {
+                    key: self._store.put(value) for key, value in resolved_data.items()
+                }
+                return self._finalize(
+                    agent_id, branch, base, head, branch_entries,
+                    merged_entries, decisions, resolver.name
+                )
 
         with self._lock:
             self._abort(agent_id, branch, self.head, [], [], getattr(resolver, "name", None), "head_kept_moving")
@@ -253,20 +277,81 @@ class Workspace:
                              "current_fencing_token": lease.fencing_token if lease else None},
                 )
 
-    def _build_conflict(self, key: str, agent_id: str, branch: Branch, base: Snapshot,
-                        head: Snapshot, branch_entries: Mapping[str, str]) -> Conflict:
-        base_hash, head_hash = base.entries.get(key), head.entries.get(key)
-        head_agent, head_intent = self._last_writer(key)
+    @staticmethod
+    def _conflict_path_tokens(path: str) -> Tuple[str, ...]:
+        if not path.startswith("json-pointer:/"):
+            return (path,)
+        raw = path[len("json-pointer:/"):]
+        return tuple(
+            part.replace("~1", "/").replace("~0", "~")
+            for part in raw.split("/")
+        )
+
+    @staticmethod
+    def _read_conflict_path(data: Mapping[str, Any], tokens: Tuple[str, ...]) -> Any:
+        value: Any = data
+        for token in tokens:
+            if not isinstance(value, dict) or token not in value:
+                return _MISSING
+            value = value[token]
+        return value
+
+    @staticmethod
+    def _apply_resolution_path(data: Dict[str, Any], path: str, decision: Resolution) -> None:
+        tokens = Workspace._conflict_path_tokens(path)
+        if len(tokens) == 1:
+            if decision.present:
+                data[tokens[0]] = copy.deepcopy(decision.value)
+            else:
+                data.pop(tokens[0], None)
+            return
+
+        parent: Any = data
+        for token in tokens[:-1]:
+            if not isinstance(parent, dict) or token not in parent:
+                raise ResolutionError(
+                    f"chemin de résolution invalide : {path}",
+                    details={"path": path},
+                )
+            parent = parent[token]
+        if not isinstance(parent, dict):
+            raise ResolutionError(
+                f"le parent du chemin de résolution n'est pas un objet JSON : {path}",
+                details={"path": path},
+            )
+        if decision.present:
+            parent[tokens[-1]] = copy.deepcopy(decision.value)
+        else:
+            parent.pop(tokens[-1], None)
+
+    def _build_conflict(
+        self, key: str, agent_id: str, branch: Branch,
+        base_data: Mapping[str, Any], branch_data: Mapping[str, Any],
+        head_data: Mapping[str, Any],
+    ) -> Conflict:
+        tokens = self._conflict_path_tokens(key)
+        base_value = self._read_conflict_path(base_data, tokens)
+        ours_value = self._read_conflict_path(branch_data, tokens)
+        theirs_value = self._read_conflict_path(head_data, tokens)
+        root_key = tokens[0]
+        head_agent, head_intent = self._last_writer(root_key)
+
+        def side(value: Any, *, agent: Optional[str] = None,
+                 intent: Optional[str] = None) -> Side:
+            present = value is not _MISSING
+            return Side(
+                present=present,
+                hash=content_hash(value) if present else None,
+                value=copy.deepcopy(value) if present else None,
+                agent_id=agent,
+                intent=intent,
+            )
+
         return Conflict(
             key=key,
-            base=Side(present=base_hash is not None, hash=base_hash,
-                      value=self._store.get(base_hash) if base_hash else None),
-            ours=Side(present=key in branch.current_data, hash=branch_entries.get(key),
-                      value=copy.deepcopy(branch.current_data.get(key)),
-                      agent_id=agent_id, intent=branch.intents.get(key)),
-            theirs=Side(present=head_hash is not None, hash=head_hash,
-                        value=self._store.get(head_hash) if head_hash else None,
-                        agent_id=head_agent, intent=head_intent),
+            base=side(base_value),
+            ours=side(ours_value, agent=agent_id, intent=branch.intents.get(root_key)),
+            theirs=side(theirs_value, agent=head_agent, intent=head_intent),
         )
 
     def _last_writer(self, key: str) -> Tuple[Optional[str], Optional[str]]:
