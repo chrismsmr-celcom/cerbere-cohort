@@ -435,7 +435,8 @@ def _observability_export_loop() -> None:
         try:
             configs = _membership_connection.execute(
                 """SELECT organization_id, endpoint, encrypted_headers, last_event_id
-                   FROM public.cohort_observability_exports WHERE enabled = true"""
+                   FROM public.cohort_observability_exports
+                   WHERE enabled = true AND next_attempt_at <= now()"""
             ).fetchall()
             for config in configs:
                 organization_id = str(config["organization_id"])
@@ -480,7 +481,7 @@ def _observability_export_loop() -> None:
                     _membership_connection.execute(
                         """UPDATE public.cohort_observability_exports
                            SET last_event_id = ?, last_success_at = now(),
-                               last_error = NULL, updated_at = now()
+                               last_error = NULL, next_attempt_at = now(), updated_at = now()
                            WHERE organization_id = ?""",
                         (batch[-1].event_id, organization_id),
                     )
@@ -493,7 +494,8 @@ def _observability_export_loop() -> None:
                     try:
                         _membership_connection.execute(
                             """UPDATE public.cohort_observability_exports
-                               SET last_error = ?, updated_at = now()
+                               SET last_error = ?, next_attempt_at = now() + interval '15 seconds',
+                                   updated_at = now()
                                WHERE organization_id = ?""",
                             (f"Delivery failed ({type(exc).__name__})", organization_id),
                         )
@@ -524,6 +526,7 @@ def startup_observability_exporter():
             last_event_id TEXT,
             last_success_at TIMESTAMPTZ,
             last_error TEXT,
+            next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT now(),
             created_by UUID REFERENCES auth.users(id) ON DELETE SET NULL,
             created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
             updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
