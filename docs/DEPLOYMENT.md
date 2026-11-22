@@ -34,7 +34,7 @@ Create a **Web Service** from this repository:
 | Runtime | Python |
 | Root directory | `python` |
 | Build command | `pip install ".[postgres]"` |
-| Start command | `uvicorn cerbere_cohort.api:app --host 0.0.0.0 --port $PORT` |
+| Start command | `uvicorn cerbere_cohort.api:app --host 0.0.0.0 --port $PORT --workers 1` |
 | Health check path | `/api/health` (liveness) |
 | Instances | **One** |
 | Uvicorn workers | **One** |
