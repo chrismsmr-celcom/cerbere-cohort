@@ -1,4 +1,5 @@
 # python/src/cerbere_cohort/workspace.py
+import base64
 import copy
 import json
 import threading
@@ -279,6 +280,15 @@ class Workspace:
 
     @staticmethod
     def _conflict_path_tokens(path: str) -> Tuple[str, ...]:
+        if path.startswith("root-key:"):
+            encoded = path[len("root-key:"):]
+            encoded += "=" * (-len(encoded) % 4)
+            try:
+                return (base64.urlsafe_b64decode(encoded.encode("ascii")).decode("utf-8"),)
+            except (ValueError, UnicodeDecodeError) as exc:
+                raise ResolutionError(
+                    f"identifiant de clé racine invalide : {path}", details={"path": path}
+                ) from exc
         if not path.startswith("json-pointer:/"):
             return (path,)
         raw = path[len("json-pointer:/"):]
