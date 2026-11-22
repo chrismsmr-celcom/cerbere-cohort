@@ -613,7 +613,7 @@ class TelemetryInstall(BaseModel):
 
 class ObservabilityExportConfig(BaseModel):
     endpoint: str = Field(min_length=8, max_length=2048)
-    headers: dict[str, str] = Field(default_factory=dict, max_length=10)
+    headers: dict[str, str] | None = Field(default=None, max_length=10)
 
     @field_validator("endpoint")
     @classmethod
@@ -625,7 +625,9 @@ class ObservabilityExportConfig(BaseModel):
 
     @field_validator("headers")
     @classmethod
-    def _validate_export_headers(cls, value: dict[str, str]) -> dict[str, str]:
+    def _validate_export_headers(cls, value: dict[str, str] | None) -> dict[str, str] | None:
+        if value is None:
+            return None
         try:
             return validate_headers(value)
         except ValueError as exc:
@@ -1267,7 +1269,15 @@ def put_observability_export(
     _require_admin(context)
     db = _observability_db()
     try:
-        encrypted = encrypt_headers(body.headers)
+        existing = db.execute(
+            """SELECT encrypted_headers FROM public.cohort_observability_exports
+               WHERE organization_id = ?""",
+            (context["organization_id"],),
+        ).fetchone()
+        if body.headers is None and existing:
+            encrypted = existing["encrypted_headers"]
+        else:
+            encrypted = encrypt_headers(body.headers or {})
         current_events = workspace.get_events()
         cursor = current_events[-1].event_id if current_events else None
         db.execute(
