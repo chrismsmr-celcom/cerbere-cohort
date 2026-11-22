@@ -13,6 +13,7 @@ CREATE TABLE IF NOT EXISTS public.cohort_observability_exports (
     last_event_id TEXT,
     last_success_at TIMESTAMPTZ,
     last_error TEXT,
+    next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     created_by UUID REFERENCES auth.users(id) ON DELETE SET NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
