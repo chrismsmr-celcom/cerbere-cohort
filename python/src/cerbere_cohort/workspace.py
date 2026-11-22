@@ -232,8 +232,13 @@ class Workspace:
         """Reject commits whose write leases expired or were replaced."""
         if not self._require_leases or getattr(branch, "_lease_exempt", False):
             return
-        changed_keys = {key for key in set(base.data) | set(branch.current_data)
-                        if base.data.get(key) != branch.current_data.get(key)}
+        base_data = base.data
+        missing = object()
+        changed_keys = {
+            key
+            for key in set(base_data) | set(branch.current_data)
+            if base_data.get(key, missing) != branch.current_data.get(key, missing)
+        }
         active = self._lease_manager.get_active_leases()
         for key in changed_keys:
             lease = active.get(key)
