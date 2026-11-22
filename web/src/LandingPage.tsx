@@ -27,7 +27,7 @@ const frameworks = [
   { name: "AutoGen", note: "Microsoft agent framework · legacy", logo: "https://cdn.simpleicons.org/microsoft/5E5E5E", href: "https://github.com/microsoft/autogen" },
 ];
 
-const destinations = ["OpenTelemetry · OTLP/HTTP", "Splunk · HEC", "Datadog", "Microsoft Sentinel", "Elasticsearch", "MCP"];
+const destinations = ["OpenTelemetry · OTLP/HTTP", "Splunk · HEC", "Datadog", "Microsoft Sentinel", "Elasticsearch"];
 
 export default function LandingPage() {
   const [activeStep, setActiveStep] = useState(-1);
@@ -180,6 +180,7 @@ export default function LandingPage() {
             ))}
           </div>
           <p className="cs-framework-footnote">Framework logos are trademarks of their respective owners. Connections are made through Cohort's public interfaces; these are not vendor-certified integrations.</p>
+          <div className="cs-connection-methods"><span>CONNECT THROUGH</span><strong>Python SDK</strong><i /><strong>REST API</strong><i /><strong>MCP</strong></div>
           <div className="cs-destinations">
             <span>OBSERVABILITY DESTINATIONS</span>
             {destinations.map((destination) => <i key={destination}>{destination}</i>)}
