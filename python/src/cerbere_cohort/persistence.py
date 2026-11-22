@@ -159,10 +159,14 @@ class PersistentWorkspace:
         """Crée une branche et la persiste."""
         return self._mutate(lambda: self._workspace.create_branch(agent_id, branch_name))
     
-    def commit(self, agent_id: str, branch: Branch, resolver=None, max_retries: int = 3) -> Snapshot:
-        """Committe et persiste le nouveau snapshot."""
+    def commit(self, agent_id: str, branch: Branch, resolver=None, max_retries: int = 3,
+               expected_head_version: str | None = None) -> Snapshot:
+        """Committe et persiste le nouveau snapshot, avec CAS strict optionnel."""
         return self._mutate(
-            lambda: self._workspace.commit(agent_id, branch, resolver=resolver, max_retries=max_retries)
+            lambda: self._workspace.commit(
+                agent_id, branch, resolver=resolver, max_retries=max_retries,
+                expected_head_version=expected_head_version,
+            )
         )
 
     def seed(self, data: Dict[str, Any], agent_id: str = "system") -> Snapshot:
