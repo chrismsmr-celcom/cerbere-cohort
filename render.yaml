@@ -22,3 +22,5 @@ services:
         value: "1"
       - key: COHORT_REQUIRE_LEASES
         value: "true"
+      - key: COHORT_EXPORT_ENCRYPTION_KEY
+        generateValue: true

@@ -25,6 +25,10 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from cerbere_cohort.workspace import Branch, Workspace, _MISSING
 from cerbere_cohort.events import event_actor
 from cerbere_cohort.telemetry import send_installation_ping
+from cerbere_cohort.observability import (
+    encrypt_headers, decrypt_headers, normalize_otlp_endpoint,
+    validate_headers, send_otlp_logs,
+)
 from cerbere_cohort.auth import (
     configure_membership_db,
     require_workspace_member,
@@ -420,6 +424,128 @@ def update_workspace_profile(
     }}
 
 
+
+_observability_worker_started = False
+_observability_worker_lock = threading.Lock()
+
+
+def _observability_export_loop() -> None:
+    """Poll enabled workspace exporters and deliver newly committed events."""
+    while True:
+        try:
+            configs = _membership_connection.execute(
+                """SELECT organization_id, endpoint, encrypted_headers, last_event_id
+                   FROM public.cohort_observability_exports
+                   WHERE enabled = true AND next_attempt_at <= now()"""
+            ).fetchall()
+            for config in configs:
+                organization_id = str(config["organization_id"])
+                try:
+                    runtime = get_runtime(organization_id)
+                    events = runtime.workspace.get_events()
+                    cursor = config["last_event_id"]
+                    if not cursor:
+                        # A newly configured destination starts from now, not from
+                        # the entire historical workspace journal.
+                        if events:
+                            _membership_connection.execute(
+                                """UPDATE public.cohort_observability_exports
+                                   SET last_event_id = ?, updated_at = now()
+                                   WHERE organization_id = ?""",
+                                (events[-1].event_id, organization_id),
+                            )
+                            _membership_connection.commit()
+                        continue
+                    event_ids = [event.event_id for event in events]
+                    try:
+                        start = event_ids.index(cursor) + 1
+                    except ValueError:
+                        # The cursor is no longer in the retained journal. Do not
+                        # replay an ambiguous history; move forward explicitly.
+                        if events:
+                            _membership_connection.execute(
+                                """UPDATE public.cohort_observability_exports
+                                   SET last_event_id = ?, last_error = ?, updated_at = now()
+                                   WHERE organization_id = ?""",
+                                (events[-1].event_id, "Export cursor not found; resumed at current head", organization_id),
+                            )
+                            _membership_connection.commit()
+                        continue
+                    batch = events[start:start + 100]
+                    if not batch:
+                        continue
+                    serialized = [event.model_dump(mode="json") for event in batch]
+                    send_otlp_logs(
+                        config["endpoint"], decrypt_headers(config["encrypted_headers"]), serialized
+                    )
+                    _membership_connection.execute(
+                        """UPDATE public.cohort_observability_exports
+                           SET last_event_id = ?, last_success_at = now(),
+                               last_error = NULL, next_attempt_at = now(), updated_at = now()
+                           WHERE organization_id = ?""",
+                        (batch[-1].event_id, organization_id),
+                    )
+                    _membership_connection.commit()
+                except Exception as exc:
+                    logger.warning(
+                        "Cohort observability export failed for workspace %s (%s)",
+                        organization_id, type(exc).__name__,
+                    )
+                    try:
+                        _membership_connection.execute(
+                            """UPDATE public.cohort_observability_exports
+                               SET last_error = ?, next_attempt_at = now() + interval '15 seconds',
+                                   updated_at = now()
+                               WHERE organization_id = ?""",
+                            (f"Delivery failed ({type(exc).__name__})", organization_id),
+                        )
+                        _membership_connection.commit()
+                    except Exception:
+                        logger.exception("Unable to record observability export failure")
+        except Exception:
+            logger.exception("Cohort observability export poll failed")
+        threading.Event().wait(3)
+
+
+@app.on_event("startup")
+def startup_observability_exporter():
+    global _observability_worker_started
+    if not DATABASE_URL:
+        return
+    # Idempotent bootstrap; the matching Supabase migration also creates this
+    # server-only table for managed deployments.
+    _membership_connection.execute(
+        """CREATE TABLE IF NOT EXISTS public.cohort_observability_exports (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            organization_id UUID NOT NULL UNIQUE
+                REFERENCES public.cohort_organizations(id) ON DELETE CASCADE,
+            provider TEXT NOT NULL CHECK (provider IN ('otlp_http')),
+            endpoint TEXT NOT NULL,
+            encrypted_headers BYTEA NOT NULL,
+            enabled BOOLEAN NOT NULL DEFAULT true,
+            last_event_id TEXT,
+            last_success_at TIMESTAMPTZ,
+            last_error TEXT,
+            next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            created_by UUID REFERENCES auth.users(id) ON DELETE SET NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        )"""
+    )
+    _membership_connection.commit()
+    if not os.getenv("COHORT_EXPORT_ENCRYPTION_KEY", "").strip():
+        logger.warning("OTLP exporter is inactive: COHORT_EXPORT_ENCRYPTION_KEY is not configured")
+        return
+    with _observability_worker_lock:
+        if not _observability_worker_started:
+            threading.Thread(
+                target=_observability_export_loop,
+                daemon=True,
+                name="cohort-otlp-exporter",
+            ).start()
+            _observability_worker_started = True
+
+
 def _telemetry_collector_enabled() -> bool:
     return os.getenv("COHORT_TELEMETRY_COLLECTOR_ENABLED", "false").lower() in {"1", "true", "yes", "on"}
 
@@ -487,6 +613,29 @@ class TelemetryInstall(BaseModel):
     installation_id: UUID
     version: str = Field(min_length=1, max_length=40)
     deployment_type: Literal["self-hosted"] = "self-hosted"
+
+class ObservabilityExportConfig(BaseModel):
+    endpoint: str = Field(min_length=8, max_length=2048)
+    headers: dict[str, str] | None = Field(default=None, max_length=10)
+
+    @field_validator("endpoint")
+    @classmethod
+    def _validate_endpoint(cls, value: str) -> str:
+        try:
+            return normalize_otlp_endpoint(value)
+        except ValueError as exc:
+            raise ValueError(str(exc)) from exc
+
+    @field_validator("headers")
+    @classmethod
+    def _validate_export_headers(cls, value: dict[str, str] | None) -> dict[str, str] | None:
+        if value is None:
+            return None
+        try:
+            return validate_headers(value)
+        except ValueError as exc:
+            raise ValueError(str(exc)) from exc
+
 
 
 class ResolveRequest(BaseModel):
@@ -1082,6 +1231,123 @@ def _invitation_db():
     if not DATABASE_URL:
         raise HTTPException(status_code=503, detail="Organization invitations require PostgreSQL")
     return workspace._conn
+
+
+def _observability_db():
+    if not DATABASE_URL:
+        raise HTTPException(status_code=503, detail="Observability exports require PostgreSQL")
+    if not os.getenv("COHORT_EXPORT_ENCRYPTION_KEY", "").strip():
+        raise HTTPException(status_code=503, detail="Observability encryption is not configured on this deployment")
+    return _membership_connection
+
+
+@app.get("/api/observability/export")
+def get_observability_export(
+    context: dict[str, Any] = Depends(require_workspace_member),
+):
+    row = _observability_db().execute(
+        """SELECT provider, endpoint, enabled, last_success_at, last_error,
+                  encrypted_headers
+           FROM public.cohort_observability_exports WHERE organization_id = ?""",
+        (context["organization_id"],),
+    ).fetchone()
+    if not row:
+        return {"configured": False, "provider": "otlp_http", "enabled": False}
+    return {
+        "configured": True,
+        "provider": row["provider"],
+        "endpoint": row["endpoint"],
+        "enabled": row["enabled"],
+        "has_credentials": bool(row["encrypted_headers"]),
+        "last_success_at": row["last_success_at"].isoformat() if row["last_success_at"] else None,
+        "last_error": row["last_error"],
+    }
+
+
+@app.put("/api/observability/export")
+def put_observability_export(
+    body: ObservabilityExportConfig,
+    context: dict[str, Any] = Depends(require_workspace_member),
+):
+    _require_admin(context)
+    db = _observability_db()
+    try:
+        existing = db.execute(
+            """SELECT encrypted_headers FROM public.cohort_observability_exports
+               WHERE organization_id = ?""",
+            (context["organization_id"],),
+        ).fetchone()
+        if body.headers is None and existing:
+            encrypted = existing["encrypted_headers"]
+        else:
+            encrypted = encrypt_headers(body.headers or {})
+        current_events = workspace.get_events()
+        cursor = current_events[-1].event_id if current_events else None
+        db.execute(
+            """INSERT INTO public.cohort_observability_exports
+               (organization_id, provider, endpoint, encrypted_headers, enabled,
+                last_event_id, created_by, created_at, updated_at)
+               VALUES (?, 'otlp_http', ?, ?, true, ?, ?, now(), now())
+               ON CONFLICT (organization_id) DO UPDATE SET
+                 provider = EXCLUDED.provider,
+                 endpoint = EXCLUDED.endpoint,
+                 encrypted_headers = EXCLUDED.encrypted_headers,
+                 enabled = true,
+                 last_error = NULL,
+                 updated_at = now()""",
+            (context["organization_id"], body.endpoint, encrypted, cursor, context["user_id"]),
+        )
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        if isinstance(exc, HTTPException):
+            raise
+        logger.exception("Unable to save observability export configuration")
+        raise HTTPException(status_code=503, detail="Unable to save observability configuration") from exc
+    return {"configured": True, "enabled": True, "provider": "otlp_http", "endpoint": body.endpoint}
+
+
+@app.post("/api/observability/export/test")
+def test_observability_export(
+    context: dict[str, Any] = Depends(require_workspace_member),
+):
+    _require_admin(context)
+    row = _observability_db().execute(
+        """SELECT endpoint, encrypted_headers FROM public.cohort_observability_exports
+           WHERE organization_id = ? AND enabled = true""",
+        (context["organization_id"],),
+    ).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Configure an enabled OTLP destination first")
+    test_event = {
+        "event_id": str(uuid.uuid4()),
+        "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "agent_id": "cohort-control-plane",
+        "action": "cohort.export_test",
+        "payload": {},
+        "metadata": {"source": "observability_connection_test"},
+        "schema_version": "1.0.0",
+    }
+    try:
+        send_otlp_logs(row["endpoint"], decrypt_headers(row["encrypted_headers"]), [test_event])
+    except Exception as exc:
+        logger.warning("OTLP connection test failed (%s)", type(exc).__name__)
+        raise HTTPException(status_code=502, detail=f"OTLP delivery failed ({type(exc).__name__})") from exc
+    return {"ok": True, "message": "Test log delivered to the OTLP endpoint"}
+
+
+@app.delete("/api/observability/export")
+def delete_observability_export(
+    context: dict[str, Any] = Depends(require_workspace_member),
+):
+    _require_admin(context)
+    db = _observability_db()
+    db.execute(
+        "DELETE FROM public.cohort_observability_exports WHERE organization_id = ?",
+        (context["organization_id"],),
+    )
+    db.commit()
+    return {"deleted": True}
 
 
 @app.post("/api/organizations/invitations", status_code=201)

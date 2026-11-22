@@ -16,7 +16,7 @@ Do not configure an unrelated database for the API: membership checks read `publ
 
 ## 1. Configure Supabase
 
-1. Create a Supabase project and apply **all** files in `supabase/migrations/` in ascending filename order. The sequence currently ends at `202611220002_organization_profile.sql`; applying only the first migration leaves onboarding, credentials, invitations, audit, and organization-profile schema incomplete.
+1. Create a Supabase project and apply **all** files in `supabase/migrations/` in ascending filename order. The sequence currently ends at `202611220003_observability_exports.sql`; applying only the first migration leaves onboarding, credentials, invitations, audit, and organization-profile schema incomplete.
 2. Configure Supabase Auth to use asymmetric JWT signing keys (ES256 or RS256). The API obtains public keys from `SUPABASE_URL/auth/v1/.well-known/jwks.json`.
 3. In Auth → URL Configuration, set the dashboard production origin as Site URL and add the exact production and preview redirect URLs you use.
 4. Use the project's PostgreSQL connection string as `DATABASE_URL`. Prefer a direct or session-pooler connection suitable for a long-running API; do not use transaction-pooler mode.
@@ -99,3 +99,15 @@ The readiness endpoint verifies database connectivity, required application tabl
 - Free Render hosting can sleep when idle.
 
 Treat this as an early-beta deployment, not an enterprise-ready multi-instance coordination service.
+
+## 6. Configure external observability export
+
+The hosted API can forward workspace coordination events to one OTLP/HTTP logs destination per workspace.
+
+- Apply `supabase/migrations/202611220003_observability_exports.sql` after the earlier migrations.
+- Set `COHORT_EXPORT_ENCRYPTION_KEY` on the API service. The Render Blueprint now declares this as a generated secret. If you manage environment variables outside the Blueprint, generate a stable 32-byte secret (for example, `openssl rand -hex 32`) and set it manually. **Do not rotate this key after destinations have been configured** unless you first re-encrypt or remove those destinations; old credentials cannot be decrypted with a new key.
+- Restart/redeploy the API after setting the key. The exporter runs in the API process; keep the existing one-instance/one-worker constraint.
+- Workspace owners/admins can configure the destination in Dashboard → Setting → External observability. The API key/header is encrypted before it is stored in PostgreSQL and is never returned to the browser after save.
+- Use the **Send test log** action before running agents. For Datadog, use the OTLP/HTTP logs endpoint for the account's site and the `dd-api-key` header. Other OTLP-compatible backends can use their required auth header.
+
+The beta exporter sends logs only (not traces or metrics), retries failed batches after a short delay, and uses at-least-once delivery. Consumers should deduplicate with `cohort.event_id`. It intentionally omits workspace values, prompts, full change payloads, and credentials. Exported metadata still contains operational identifiers such as agent IDs and branch names; treat the destination with the same access controls as Cohort's event log.
