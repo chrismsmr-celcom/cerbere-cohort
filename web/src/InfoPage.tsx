@@ -15,7 +15,7 @@ export default function InfoPage({ kind }: { kind: InfoKind }) {
       <span className="cs-section-kicker">{isBlog ? "THE COHORT BLOG" : "COHORT · PUBLIC BETA"}</span>
       <h1>{title}</h1>
       <p>{description}</p>
-      {!isBlog && <p>For questions about the current beta, account information, workspace data or confidentiality, contact the Cohort team directly. We will provide the applicable details before asking users to rely on a finalized policy.</p>}
+      {!isBlog && <p id="confidentiality">For questions about the current beta, account information, workspace data or confidentiality, contact the Cohort team directly. We will provide the applicable details before asking users to rely on a finalized policy.</p>}
       {isBlog && <p>In the meantime, follow the project repository for source changes and release notes.</p>}
       <div className="cs-info-actions">
         <a className="cs-button" href={isBlog ? "https://github.com/chrismsmr-celcom/cerbere-cohort" : "mailto:christopher-ag@cerbereag.site"}>{isBlog ? "Follow Cohort on GitHub" : "Contact Cohort"} <ArrowUpRight size={15} /></a>
