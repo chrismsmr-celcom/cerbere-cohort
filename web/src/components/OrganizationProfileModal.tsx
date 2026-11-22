@@ -70,13 +70,13 @@ export default function OrganizationProfileModal({ workspace, onClose, onSaved }
     setError("");
     try {
       const extension = file.type === "image/jpeg" ? "jpg" : file.type === "image/webp" ? "webp" : "png";
-      const path = `${workspace.id}/logo.${extension}`;
+      const path = `${workspace.id}/logo-${crypto.randomUUID()}.${extension}`;
       const { error: uploadError } = await supabase.storage
         .from("cohort-organization-logos")
-        .upload(path, file, { upsert: true, contentType: file.type, cacheControl: "3600" });
+        .upload(path, file, { upsert: false, contentType: file.type, cacheControl: "3600" });
       if (uploadError) throw uploadError;
       const { data } = supabase.storage.from("cohort-organization-logos").getPublicUrl(path);
-      change("logo_url", data.publicUrl);
+      const previousUrl = profile.logo_url;\n      change("logo_url", data.publicUrl);\n      if (previousUrl?.startsWith(`${(import.meta as any).env?.VITE_SUPABASE_URL}/storage/v1/object/public/cohort-organization-logos/`)) {\n        const previousPath = previousUrl.split("/cohort-organization-logos/")[1];\n        if (previousPath) await supabase.storage.from("cohort-organization-logos").remove([decodeURIComponent(previousPath)]);\n      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Logo upload failed.");
     } finally {
