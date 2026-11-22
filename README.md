@@ -217,7 +217,7 @@ The MCP integration is an early implementation. Its branch registry is currently
 | **SQLite persistence** | Keep local workspace state and event history between runs. |
 | **PostgreSQL adapter** | Run the hosted API with PostgreSQL-backed persistence. |
 
-The REST service is built with FastAPI. In hosted PostgreSQL mode, it validates Supabase JWTs and checks membership in the deployment's configured organization.
+The REST service is built with FastAPI. In hosted PostgreSQL mode, it validates Supabase JWTs and checks active membership for the organization selected by the request. Each organization is routed to its own PostgreSQL schema.
 
 ## Deployment
 
@@ -266,12 +266,12 @@ Cohort is under active development. The current implementation includes the key-
 
 A few implementation details matter when evaluating the current release:
 
-- The hosted API is configured for one organization per deployment and one API instance. It is not yet a general multi-tenant or horizontally scalable coordination service.
+- Multiple organizations are isolated into separate PostgreSQL schemas, but the hosted API must run as one instance and one Uvicorn worker because runtime and branch registries are process-local.
 - The MCP server uses a separate branch registry from the REST API.
 - The MCP server requires stdio when `DATABASE_URL` is configured; authenticated remote MCP transport is not implemented.
 - The workspace is key-value based. Conflict detection operates at key granularity.
 - The Rust trace analyzer is an early tool for basic JSONL analysis.
-- Cohort coordinates shared state; it does not provide agent identity, external tool authorization, or code sandboxing.
+- Agent credentials are bound to an agent identity, and audit events distinguish the authenticated actor from the target agent. Cohort does not provide external tool authorization or code sandboxing.
 - Conflict resolution policies do not guarantee semantic correctness of application data.
 
 The hosted API's route definitions and request/response models in the source code are the reference for exact API behavior. Run the service to access FastAPI's interactive documentation at `/docs`.
@@ -291,7 +291,7 @@ These are development directions, not claims about features already shipped. See
 
 ## Security and data handling
 
-The hosted REST API authenticates human users with Supabase JWTs and checks active membership in its configured organization. This does not provide agent-level identity, general multi-tenant isolation, external tool authorization, or code sandboxing.
+The hosted REST API authenticates human users with Supabase JWTs and checks active membership for the requested organization. Agent credentials are bound to their own agent identity; audit events record the initiating principal separately from the affected agent. This does not provide external tool authorization or code sandboxing.
 
 Local library and SQLite development usage do not provide an authenticated public API. Do not expose them directly to the internet. Workspace values and event payloads may contain application data; apply appropriate redaction, access controls, and retention policies before storing sensitive information.
 
