@@ -18,11 +18,11 @@ import Events from "./pages/Events";
 import Gateway from "./pages/Gateway";
 import Performance from "./pages/Performance";
 import Advisor from "./pages/Advisor";
+import Coordination from "./pages/Coordination";
 import Settings from "./pages/Settings";
-import Traction from "./pages/Traction";
 import "./styles/app.css";
 
-const TABS: Record<Tab, string> = { overview: "Overview", branches: "Branches", state: "Shared state", leases: "Leases", events: "Event log", gateway: "Gateway", performance: "Performance", advisor: "Advisor", settings: "Setting", traction: "Traction" };
+const TABS: Record<Tab, string> = { overview: "Overview", branches: "Branches", state: "Shared state", leases: "Leases", events: "Event log", gateway: "Gateway", performance: "Performance", advisor: "Advisor", coordination: "Coordination", settings: "Setting" };
 const readTab = (): Tab => { const h = window.location.hash.replace(/^#\/?/, "") as Tab; return h in TABS ? h : "overview"; };
 const stored = <T extends string>(key: string, allowed: T[], fallback: T): T => { try { const v = localStorage.getItem(key) as T | null; return v && allowed.includes(v) ? v : fallback; } catch { return fallback; } };
 
@@ -80,7 +80,7 @@ function Shell({ userEmail, onSignOut, workspaces, activeWorkspace, onWorkspaceC
         {tab === "gateway" && <Gateway ctx={ctx} />}
         {tab === "performance" && <Performance ctx={ctx} />}
         {tab === "advisor" && <Advisor ctx={ctx} />}
-        {tab === "traction" && <Traction />}
+        {tab === "coordination" && <Coordination ctx={ctx} />}
         {tab === "settings" && <Settings ctx={ctx} dark={dark} setDark={setDark} mode={mode} setMode={setMode} />}
       </main>
     </div>

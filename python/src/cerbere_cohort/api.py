@@ -603,28 +603,6 @@ def register_telemetry_installation(body: TelemetryInstall):
     return {"accepted": True}
 
 
-@app.get("/api/traction", dependencies=[Depends(require_workspace_read_access)])
-def get_traction_metrics():
-    """Return aggregate opt-in installation counts to authenticated workspace members."""
-    if not _telemetry_collector_enabled() or not DATABASE_URL:
-        raise HTTPException(status_code=404, detail="Traction telemetry is not enabled")
-    row = _membership_connection.execute(
-        """SELECT COUNT(*) AS total_installations,
-                  COUNT(*) FILTER (WHERE last_seen >= CURRENT_TIMESTAMP - INTERVAL '30 days') AS active_30d
-           FROM cohort_telemetry_installations"""
-    ).fetchone()
-    versions = _membership_connection.execute(
-        """SELECT version, COUNT(*) AS installations
-           FROM cohort_telemetry_installations GROUP BY version ORDER BY installations DESC"""
-    ).fetchall()
-    return {
-        "self_hosted_installations_total": row["total_installations"],
-        "self_hosted_installations_active_30d": row["active_30d"],
-        "versions": [{"version": item["version"], "installations": item["installations"]} for item in versions],
-        "note": "Opt-in, self-reported installation telemetry; not a count of unique people or customers.",
-    }
-
-
 @app.get("/api/overview")
 def overview(context: dict[str, Any] = Depends(require_workspace_read_access)):
     events = workspace.get_events()
