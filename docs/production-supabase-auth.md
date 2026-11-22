@@ -4,19 +4,19 @@
 
 Set these variables in the Cohort API service:
 
-- `DATABASE_URL`: Supabase PostgreSQL connection string. Use the pooler connection appropriate for a long-running API if required by your Supabase plan.
-- `SUPABASE_URL`: project URL, for example `https://<project-ref>.supabase.co`.
-- `COHORT_ORGANIZATION_ID`: UUID of the one organization enabled on this deployment.
-- `COHORT_CORS_ORIGINS`: exact Vercel origin(s), comma-separated, e.g. `https://cohort-delta.vercel.app`.
-- `COHORT_REQUIRE_LEASES`: `true` or `false`.
+- `DATABASE_URL`: Supabase PostgreSQL connection string. Use a direct or session-pooler connection suitable for a long-running API; do not use transaction-pooler mode.
+- `SUPABASE_URL`: Supabase project URL, for example `https://<project-ref>.supabase.co`.
+- `COHORT_CORS_ORIGINS`: exact dashboard origin(s), comma-separated, no wildcard.
+- `COHORT_ENV=production`.
+- `COHORT_REQUIRE_LEASES`: choose `true` or `false` deliberately.
 
-The API fails at startup if `DATABASE_URL`, `SUPABASE_URL`, or `COHORT_ORGANIZATION_ID` is malformed/missing for production. The backend verifies Supabase asymmetric JWTs through the project's JWKS endpoint and checks an active row in `public.cohort_memberships` on every API request. It does not trust a role or organization claim supplied by the browser.
+The API refuses to start on hosted deployments without `DATABASE_URL`. When PostgreSQL is configured, it also requires `SUPABASE_URL` and explicit CORS origins. Supabase access tokens are verified with asymmetric ES256/RS256 keys fetched from the project's JWKS endpoint. Membership is checked against `public.cohort_memberships`; the browser cannot supply its own role or trusted organization claim.
 
 ## Apply the database migration
 
 Run `supabase/migrations/202611190001_cohort_organizations.sql` in the Supabase SQL Editor.
 
-Create the first organization:
+The normal onboarding flow creates the first organization and owner membership after the user signs in. For manual bootstrap, create an organization:
 
 ```sql
 insert into public.cohort_organizations (name)
@@ -24,39 +24,32 @@ values ('Your organization')
 returning id;
 ```
 
-Copy the returned UUID into Render's `COHORT_ORGANIZATION_ID`.
-
-Create the first owner membership after the owner has signed up through Supabase Auth:
+Then create the owner's membership using the UUID returned above and the user's UUID from Supabase Dashboard → Authentication → Users:
 
 ```sql
 insert into public.cohort_memberships (organization_id, user_id, role, status)
-values (
-  '<COHORT_ORGANIZATION_ID>',
-  '<AUTH_USERS_ID>',
-  'owner',
-  'active'
-);
+values ('<ORGANIZATION_UUID>', '<AUTH_USER_UUID>', 'owner', 'active');
 ```
 
-Find the user UUID in Supabase Dashboard → Authentication → Users. Provision additional memberships through trusted admin tooling or the SQL Editor, not through the public browser client.
+Provision additional memberships through trusted admin tooling or the SQL Editor, not through the public browser client.
 
 ## Frontend environment (Vercel)
 
-Set:
+Set build-time variables:
 
 - `VITE_API_BASE_URL`: Render API base URL, with no trailing slash.
 - `VITE_SUPABASE_URL`: same Supabase project URL.
 - `VITE_SUPABASE_ANON_KEY`: Supabase publishable/anon key only.
-- `VITE_COHORT_ORGANIZATION_ID`: same organization UUID configured on Render.
+- `VITE_API_TIMEOUT_MS`: optional request timeout in milliseconds; defaults to 90000 and is capped at 180000.
 
-Never put the Supabase service-role key or PostgreSQL password in Vercel's `VITE_*` variables or browser code.
+Never put the Supabase service-role key or PostgreSQL password in a `VITE_*` variable or browser code.
 
 The dashboard supports email magic links and Google sign-in. Enable Google as a provider in Supabase Auth and configure its OAuth credentials and redirect URLs in the Supabase dashboard. Add the Vercel production URL and any preview URLs you actually use to Supabase Auth's allowed redirect URLs.
 
-## Current security boundary
+## Tenant and runtime boundary
 
-This release intentionally supports **one organization per API deployment**. The API rejects any other organization ID and verifies active membership on every route except the public health check. Roles `owner`, `admin`, and `member` can write; `viewer` is read-only.
+Multiple organizations can use the same API deployment. Each organization is routed to a separate PostgreSQL schema, and membership is checked for the requested organization on protected API routes.
 
-This is not yet a shared multi-tenant control plane: organization-scoped data partitioning across multiple organizations, organization-aware branch records, and cross-instance branch locking still need implementation and integration tests. Do not put multiple customer organizations behind one instance until those changes land.
+The current runtime and branch registry are process-local. Run exactly one API instance and one Uvicorn worker. Do not horizontally scale until branch/runtime state and coordination locks are moved behind a shared process-independent boundary.
 
-Remote MCP over HTTP is deliberately blocked when `DATABASE_URL` is configured because authenticated MCP transport has not been implemented. Use local stdio integration only. REST and MCP persist to the same database schema, but their in-memory engine caches are not yet coordinated across separate processes; avoid simultaneous API/MCP writes to the same workspace until a shared runtime/service boundary is implemented.
+Remote MCP over HTTP is deliberately blocked when `DATABASE_URL` is configured because authenticated MCP transport has not been implemented. The MCP server has a separate branch registry and its in-memory engine cache is not coordinated with the REST API. Do not run concurrent MCP and REST writes against the same workspace.

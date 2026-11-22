@@ -30,6 +30,7 @@ from cerbere_cohort.auth import (
     require_workspace_member,
     authenticate_agent_token,
     _decode_access_token,
+    _jwks_client,
     require_workspace_read_access,
     require_workspace_write_access,
     require_lease_read_access,
@@ -430,14 +431,64 @@ def _branch_summary(branch_id: str, item: dict[str, Any]) -> dict[str, Any]:
 
 @app.get("/api/health")
 def health():
+    """Liveness and safe, non-secret deployment configuration diagnostics."""
+    origins = [item.strip() for item in os.getenv("COHORT_CORS_ORIGINS", "").split(",") if item.strip()]
+    hosted = bool(DATABASE_URL)
     return {
         "ok": True,
         "service": "cerbere-cohort",
         "runtime": "python",
-        "persistence": "postgresql" if DATABASE_URL.startswith(("postgres://", "postgresql://")) else "sqlite",
+        "persistence": "postgresql" if hosted else "sqlite",
         "branch_registry": "database",
-        "authentication": "supabase" if DATABASE_URL else "development-bypass",
+        "authentication": "supabase" if hosted else "development-bypass",
+        "configuration": {
+            "database_configured": hosted,
+            "supabase_url_configured": bool(os.getenv("SUPABASE_URL", "").strip()) if hosted else False,
+            "cors_origins_configured": bool(origins) and "*" not in origins if hosted else True,
+        },
+        "tenant_isolation": "postgresql_schema_per_organization" if hosted else "local_sqlite",
+        "single_instance_required": hosted,
     }
+
+
+@app.get("/api/ready")
+def ready():
+    """Readiness check: verify database connectivity and required hosted config."""
+    hosted = bool(DATABASE_URL)
+    origins = [item.strip() for item in os.getenv("COHORT_CORS_ORIGINS", "").split(",") if item.strip()]
+    checks = {
+        "database": False,
+        "membership_table": not hosted,
+        "supabase_url": not hosted or bool(os.getenv("SUPABASE_URL", "").strip()),
+        "supabase_jwks": not hosted,
+        "cors_origins": not hosted or (bool(origins) and "*" not in origins),
+    }
+    try:
+        _membership_connection.execute("SELECT 1").fetchone()
+        checks["database"] = True
+    except Exception:
+        logger.exception("Readiness database check failed")
+    if hosted and checks["database"]:
+        try:
+            _membership_connection.execute(
+                "SELECT 1 FROM public.cohort_memberships LIMIT 0"
+            ).fetchone()
+            checks["membership_table"] = True
+        except Exception:
+            logger.exception("Readiness membership schema check failed")
+    if hosted and checks["supabase_url"]:
+        try:
+            if not _jwks_client().get_signing_keys():
+                raise RuntimeError("Supabase JWKS endpoint returned no signing keys")
+            checks["supabase_jwks"] = True
+        except Exception:
+            logger.exception("Readiness Supabase JWKS check failed")
+    if not all(checks.values()):
+        raise HTTPException(
+            status_code=503,
+            detail={"message": "Cohort is not ready", "checks": checks},
+        )
+    return {"ok": True, "checks": checks}
 
 
 @app.post("/api/telemetry/install", status_code=202)
