@@ -55,3 +55,40 @@ def test_headers_reject_newlines_and_invalid_names():
         observability.validate_headers({"Authorization": "Bearer ok\r\nX-Evil: yes"})
     with pytest.raises(ValueError):
         observability.validate_headers({"Bad Header": "value"})
+
+
+def test_send_uses_otlp_http_and_custom_auth_header(monkeypatch):
+    import socket
+
+    captured = {}
+    class Response:
+        status = 200
+        def __enter__(self): return self
+        def __exit__(self, *args): return False
+    class Opener:
+        def open(self, request, timeout):
+            captured["url"] = request.full_url
+            captured["headers"] = dict(request.header_items())
+            captured["payload"] = json.loads(request.data)
+            captured["timeout"] = timeout
+            return Response()
+    monkeypatch.setattr(observability.socket, "getaddrinfo", lambda *args, **kwargs: [
+        (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("8.8.8.8", 443))
+    ])
+    monkeypatch.setattr(observability.urllib.request, "build_opener", lambda *args: Opener())
+    observability.send_otlp_logs(
+        "https://otlp.datadoghq.com", {"dd-api-key": "test-secret"},
+        [{"event_id": "evt-2", "timestamp": "2026-11-22T12:00:00Z",
+          "agent_id": "agent-a", "action": "workspace.commit", "payload": {}}],
+    )
+    assert captured["url"] == "https://otlp.datadoghq.com/v1/logs"
+    assert captured["headers"]["Dd-api-key"] == "test-secret"
+    assert captured["payload"]["resourceLogs"][0]["scopeLogs"][0]["logRecords"][0]["severityText"] == "INFO"
+    assert captured["timeout"] == 5.0
+
+
+def test_send_rejects_private_ip_destinations():
+    with pytest.raises(ValueError, match="public IP"):
+        observability.send_otlp_logs(
+            "https://127.0.0.1/v1/logs", {}, []
+        )
