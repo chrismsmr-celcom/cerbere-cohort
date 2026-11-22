@@ -226,3 +226,34 @@ def test_seed_works_even_when_leases_are_required():
     ws = Workspace(require_leases=True)
     ws.seed({"k": 1})
     assert ws.head.data == {"k": 1}
+
+
+
+def test_replay_keeps_legacy_root_key_starting_with_root_key_prefix_literal():
+    from cerbere_cohort import PreferBranch
+
+    ws = Workspace()
+    key = "root-key:aw"
+    ws.seed({key: "base"})
+    a, b = ws.create_branch("A", "legacy-key-a"), ws.create_branch("B", "legacy-key-b")
+    a.set(key, "head")
+    b.set(key, "branch")
+    ws.commit("A", a)
+    ws.commit("B", b, resolver=PreferBranch())
+
+    # Simulate a journal produced before the v1 encoded root-key format:
+    # the old conflict identifier was the literal root key.
+    events = []
+    encoded = "root-key:v1:cm9vdC1rZXk6YXc"
+    for event in ws.get_events():
+        payload = dict(event.payload)
+        if event.action == "coordination.resolved" and payload.get("key") == encoded:
+            payload["key"] = key
+        if event.action == "workspace.commit" and encoded in payload.get("resolutions", {}):
+            resolutions = dict(payload["resolutions"])
+            resolutions[key] = resolutions.pop(encoded)
+            payload["resolutions"] = resolutions
+        events.append(CerbereCohortEvent(**{**event.model_dump(), "payload": payload}))
+
+    replayed = Workspace.replay(events, ws.store)
+    assert replayed.head.data[key] == "branch"

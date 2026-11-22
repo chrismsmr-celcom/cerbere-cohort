@@ -59,7 +59,7 @@ def _conflict_path(tokens: Tuple[str, ...]) -> str:
         # so they can never be mistaken for nested JSON Pointer conflicts.
         if key.startswith(("json-pointer:/", "root-key:")):
             encoded = urlsafe_b64encode(key.encode("utf-8")).decode("ascii").rstrip("=")
-            return "root-key:" + encoded
+            return "root-key:v1:" + encoded
         return key
     escaped = (part.replace("~", "~0").replace("/", "~1") for part in tokens)
     return "json-pointer:/" + "/".join(escaped)

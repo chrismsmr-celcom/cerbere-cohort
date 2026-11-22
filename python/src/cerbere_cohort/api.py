@@ -21,7 +21,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator, model_validator
-from cerbere_cohort.workspace import Branch
+from cerbere_cohort.workspace import Branch, Workspace, _MISSING
 from cerbere_cohort.telemetry import send_installation_ping
 from cerbere_cohort.auth import (
     configure_membership_db,
@@ -625,22 +625,28 @@ def get_branch_conflict(branch_id: str, context: dict[str, Any] = Depends(requir
             raise HTTPException(409, "Branch base snapshot is no longer available")
         head = workspace.head
         branch_data = item["branch"].current_data
+        base_data = base.data
+        head_data = head.data
+        conflicts = []
+        for key in keys:
+            tokens = Workspace._conflict_path_tokens(key)
+            base_value = Workspace._read_conflict_path(base_data, tokens)
+            head_value = Workspace._read_conflict_path(head_data, tokens)
+            branch_value = Workspace._read_conflict_path(branch_data, tokens)
+            conflicts.append({
+                "key": key,
+                "base": None if base_value is _MISSING else base_value,
+                "head": None if head_value is _MISSING else head_value,
+                "branch": None if branch_value is _MISSING else branch_value,
+                "base_present": base_value is not _MISSING,
+                "head_present": head_value is not _MISSING,
+                "branch_present": branch_value is not _MISSING,
+            })
         return {
             "branch_id": branch_id,
             "base_version": base.version_id,
             "head_version": head.version_id,
-            "conflicts": [
-                {
-                    "key": key,
-                    "base": base.data.get(key),
-                    "head": head.data.get(key),
-                    "branch": branch_data.get(key),
-                    "base_present": key in base.entries,
-                    "head_present": key in head.entries,
-                    "branch_present": key in branch_data,
-                }
-                for key in keys
-            ],
+            "conflicts": conflicts,
         }
 
 
