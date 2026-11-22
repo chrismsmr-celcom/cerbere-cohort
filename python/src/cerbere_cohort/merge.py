@@ -82,7 +82,7 @@ def _merge_node(
         return merged
 
     conflicts.append(_conflict_path(path))
-    return deepcopy(head)
+    return _clone(head)
 
 
 def detect_and_merge(
