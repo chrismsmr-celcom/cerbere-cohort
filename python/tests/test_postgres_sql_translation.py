@@ -49,3 +49,25 @@ def test_mcp_branch_registry_is_organization_scoped():
 def test_mcp_branch_registry_keeps_public_compatibility():
     sql = _Connection._translate("SELECT * FROM mcp_branches")
     assert sql == "SELECT * FROM cohort_mcp_branches"
+
+
+
+def test_audit_log_metadata_column_is_not_rewritten_as_metadata_table():
+    sql = _Connection._translate(
+        "INSERT INTO public.cohort_audit_logs "
+        "(organization_id, actor_user_id, action, target_type, target_id, metadata) "
+        "VALUES (?, ?, 'workspace.onboarding_completed', 'workspace', ?, "
+        "jsonb_build_object('account_type', ?, 'email_domain', ?))"
+    )
+    assert "public.cohort_audit_logs" in sql
+    assert ", metadata)" in sql
+    assert "public.cohort_metadata" not in sql
+
+
+def test_legacy_metadata_table_is_still_namespaced():
+    create_sql = _Connection._translate(
+        "CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)"
+    )
+    select_sql = _Connection._translate("SELECT key, value FROM metadata")
+    assert create_sql.startswith("CREATE TABLE IF NOT EXISTS public.cohort_metadata")
+    assert select_sql == "SELECT key, value FROM public.cohort_metadata"
