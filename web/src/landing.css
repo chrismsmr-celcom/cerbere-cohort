@@ -262,3 +262,8 @@
 @media (prefers-reduced-motion: reduce) {
   .cs-framework-card,.cs-footer-wordmark,.cs-footer-mark-arrow,.cs-footer-columns a { transition: none !important; }
 }
+
+.cs-connection-methods { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; margin-top: 24px; color: var(--cs-muted); }
+.cs-connection-methods > span { width: 100%; margin-bottom: 2px; color: #7058a4; font: 800 9px "Roboto",monospace; letter-spacing: .1em; }
+.cs-connection-methods strong { font-size: 11px; font-weight: 850; }
+.cs-connection-methods i { width: 4px; height: 4px; border-radius: 50%; background: #9a8eaa; }
