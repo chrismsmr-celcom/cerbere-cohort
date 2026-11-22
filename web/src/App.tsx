@@ -81,7 +81,7 @@ export default function App() {
       setBusy(true); setMessage(null);
       const { error } = await supabase.auth.signInWithOtp({
         email: email.trim(),
-        options: { emailRedirectTo: window.location.origin },
+        options: { emailRedirectTo: `${window.location.origin}/app` },
       });
       if (error) setMessage({ tone: "error", text: error.message });
       else { setSent(true); setMessage({ tone: "info", text: `We sent a secure link to ${email.trim()}. Check your inbox.` }); }
@@ -90,7 +90,7 @@ export default function App() {
     async function signInWithProvider(provider: "google" | "github" | "gitlab") {
       if (!supabase) return;
       setBusy(true); setMessage(null);
-      const { error } = await supabase.auth.signInWithOAuth({ provider, options: { redirectTo: window.location.origin } });
+      const { error } = await supabase.auth.signInWithOAuth({ provider, options: { redirectTo: `${window.location.origin}/app` } });
       if (error) { setMessage({ tone: "error", text: error.message }); setBusy(false); }
     }
     return <SplitAuthScreen mode={authMode} email={email} busy={busy} sent={sent} message={message}
