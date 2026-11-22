@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/cohort-logo.png" alt="Cohort" width="120" />
+<img src="docs/cohortgif.gif" alt="Cohort" width="120" />
 
 # Cohort
 
