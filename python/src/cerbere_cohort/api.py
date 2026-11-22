@@ -8,6 +8,7 @@ from __future__ import annotations
 import datetime
 import hashlib
 import json
+import logging
 import os
 import re
 import secrets
@@ -132,6 +133,8 @@ def _restore_api_branches() -> None:
 
 if not DATABASE_URL:
     _restore_api_branches()
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Cerbere Cohort API", version="0.1.0")
 
@@ -286,6 +289,7 @@ def complete_workspace_onboarding(
         )
         _membership_connection.commit()
     except Exception as exc:
+        logger.exception("Workspace onboarding transaction failed")
         _membership_connection.rollback()
         raise HTTPException(status_code=503, detail="Unable to complete workspace onboarding") from exc
 
