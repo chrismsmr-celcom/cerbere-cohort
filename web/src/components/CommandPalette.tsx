@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Cable, Database, GitBranch, Lock, ScrollText, User } from "lucide-react";
+import { Activity, Cable, Database, GitBranch, Lock, ScrollText, User } from "lucide-react";
 import type { ReactNode } from "react";
 import type { Data, Tab } from "../lib/types";
 
@@ -7,7 +7,7 @@ type Result = { id: string; group: string; label: string; hint?: string; icon: R
 const PAGES: { tab: Tab; label: string }[] = [
   { tab: "overview", label: "Overview" }, { tab: "branches", label: "Branches" }, { tab: "state", label: "Shared state" }, { tab: "leases", label: "Leases" },
   { tab: "events", label: "Event log" }, { tab: "gateway", label: "Gateway" }, { tab: "performance", label: "Performance" }, { tab: "advisor", label: "Advisor" },
-  { tab: "traction", label: "Traction" }, { tab: "settings", label: "Setting" },
+  { tab: "coordination", label: "Coordination" }, { tab: "settings", label: "Setting" },
 ];
 
 export default function CommandPalette({ data, onClose, onNavigate }: { data: Data; onClose: () => void; onNavigate: (tab: Tab, query?: string) => void }) {
@@ -18,7 +18,7 @@ export default function CommandPalette({ data, onClose, onNavigate }: { data: Da
   const results = useMemo<Result[]>(() => {
     const n = q.trim().toLowerCase(); const out: Result[] = [];
     const has = (s: string) => !n || s.toLowerCase().includes(n);
-    PAGES.filter((p) => has(p.label)).forEach((p) => out.push({ id: `p-${p.tab}`, group: "Pages", label: p.label, icon: <Cable size={16} />, run: go(p.tab) }));
+    PAGES.filter((p) => has(p.label)).forEach((p) => out.push({ id: `p-${p.tab}`, group: "Pages", label: p.label, icon: p.tab === "coordination" ? <Activity size={16} /> : <Cable size={16} />, run: go(p.tab) }));
     if (!n) return out;
     data.branches.filter((b) => has(`${b.name} ${b.agent_id}`)).slice(0, 5).forEach((b) => out.push({ id: `b-${b.id}`, group: "Branches", label: b.name, hint: b.agent_id, icon: <GitBranch size={16} />, run: go("branches", b.name) }));
     data.state.items.filter((s) => has(s.key)).slice(0, 5).forEach((s) => out.push({ id: `s-${s.key}`, group: "Shared state", label: s.key, icon: <Database size={16} />, run: go("state", s.key) }));
