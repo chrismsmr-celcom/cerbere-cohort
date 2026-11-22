@@ -58,3 +58,16 @@ def test_existing_event_metadata_is_preserved():
 
     assert event.metadata["source"] == "api"
     assert event.metadata["actor"]["id"] == "user-123"
+
+
+
+def test_replayed_event_is_not_rewritten_by_active_request_actor():
+    with event_actor({"user_id": "current-user"}):
+        historical = CerbereCohortEvent(
+            event_id="historical-event-id",
+            agent_id="worker-old",
+            action="workspace.commit",
+            metadata=None,
+        )
+
+    assert historical.metadata is None
