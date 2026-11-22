@@ -458,6 +458,7 @@ def ready():
     origins = [item.strip() for item in os.getenv("COHORT_CORS_ORIGINS", "").split(",") if item.strip()]
     checks = {
         "database": False,
+        "membership_table": not hosted,
         "supabase_url": not hosted or bool(os.getenv("SUPABASE_URL", "").strip()),
         "supabase_jwks": not hosted,
         "cors_origins": not hosted or (bool(origins) and "*" not in origins),
@@ -467,6 +468,14 @@ def ready():
         checks["database"] = True
     except Exception:
         logger.exception("Readiness database check failed")
+    if hosted and checks["database"]:
+        try:
+            _membership_connection.execute(
+                "SELECT 1 FROM public.cohort_memberships LIMIT 0"
+            ).fetchone()
+            checks["membership_table"] = True
+        except Exception:
+            logger.exception("Readiness membership schema check failed")
     if hosted and checks["supabase_url"]:
         try:
             if not _jwks_client().get_signing_keys():
