@@ -1,0 +1,66 @@
+name: Beta tester feedback
+description: Report a Cohort beta bug or confusing behavior
+title: "[Beta] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use synthetic data only. Never include passwords, agent credentials, API keys, personal data, or production records.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Signup and onboarding
+        - Workspace access and isolation
+        - Agent credentials
+        - Leases and fencing
+        - Branches and commits
+        - Conflict detection or resolution
+        - Events and dashboard
+        - Deployment or availability
+        - Documentation
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: agents
+    attributes:
+      label: Number of agents
+      placeholder: "e.g. 2"
+    validations:
+      required: true
+  - type: input
+    id: runtime
+    attributes:
+      label: Framework and runtime
+      placeholder: "e.g. Python 3.12, LangGraph"
+    validations:
+      required: false
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Use sanitized IDs and synthetic values.
+      placeholder: "1. Acquire lease ...\n2. Create branch ...\n3. Commit ..."
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Sanitized diagnostics
+      description: Include HTTP status, error code, and approximate timestamp. Remove tokens, emails, workspace IDs, and sensitive payloads.
+    validations:
+      required: false

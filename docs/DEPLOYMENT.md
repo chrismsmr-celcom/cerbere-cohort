@@ -16,7 +16,7 @@ Do not configure an unrelated database for the API: membership checks read `publ
 
 ## 1. Configure Supabase
 
-1. Create a Supabase project and apply `supabase/migrations/202611190001_cohort_organizations.sql`.
+1. Create a Supabase project and apply **all** files in `supabase/migrations/` in ascending filename order. The sequence currently ends at `202611220002_organization_profile.sql`; applying only the first migration leaves onboarding, credentials, invitations, audit, and organization-profile schema incomplete.
 2. Configure Supabase Auth to use asymmetric JWT signing keys (ES256 or RS256). The API obtains public keys from `SUPABASE_URL/auth/v1/.well-known/jwks.json`.
 3. In Auth → URL Configuration, set the dashboard production origin as Site URL and add the exact production and preview redirect URLs you use.
 4. Use the project's PostgreSQL connection string as `DATABASE_URL`. Prefer a direct or session-pooler connection suitable for a long-running API; do not use transaction-pooler mode.
@@ -47,7 +47,7 @@ Set these environment variables:
 | `SUPABASE_URL` | Supabase project URL |
 | `COHORT_CORS_ORIGINS` | Exact dashboard origin(s), comma-separated, no wildcard |
 | `COHORT_ENV` | `production` |
-| `COHORT_REQUIRE_LEASES` | `true` or `false`, chosen deliberately |
+| `COHORT_REQUIRE_LEASES` | `true` for hosted beta; every agent must acquire a lease before writing a key |
 | `COHORT_TELEMETRY_COLLECTOR_ENABLED` | Optional; `true` only if accepting opt-in Community installation pings |
 
 `COHORT_ORGANIZATION_ID` is not required. Organizations are created through onboarding and selected per request after membership verification. Render provides `PORT`; do not hard-code it.
@@ -80,12 +80,13 @@ Vite embeds `VITE_*` values in public browser assets. Never use a service-role k
 ## 4. Verify the deployment
 
 1. Open `https://YOUR-API/api/health`. Confirm `persistence=postgresql`, `authentication=supabase`, `configuration.supabase_url_configured=true`, `configuration.cors_origins_configured=true`, and `single_instance_required=true`.
-2. Open `https://YOUR-API/api/ready`. It must return HTTP 200 with `database`, `membership_table`, `supabase_url`, `supabase_jwks`, and `cors_origins` checks all true.
+2. Open `https://YOUR-API/api/ready`. It must return HTTP 200 with `database`, `membership_table`, `application_schema`, `onboarding_trigger`, `supabase_url`, `supabase_jwks`, and `cors_origins` checks all true. The application-schema check covers the columns introduced by every committed Supabase migration.
 3. Open `https://YOUR-API/docs` and inspect the actual OpenAPI schemas.
 4. Sign in through the dashboard. Confirm a non-member receives 403 and an active member can read workspace state.
-5. Create two branches, make conflicting writes, and confirm the second commit reports a conflict instead of silently overwriting the first.
+5. With two distinct agent credentials, acquire a lease before each write. Create two branches from the same base, write different values to the same key, commit the first, and confirm the second reports a conflict. Inspect and resolve it; verify the final state and event history.
+6. Repeat the same API flow in a second organization and confirm it cannot read or mutate the first organization state.
 6. Restart the API and confirm persisted workspace state and open branches are restored.
-7. Confirm Render is running exactly one instance and the deployment logs show no database/JWKS or membership errors.
+8. Confirm Render is running exactly one instance and the deployment logs show no database/JWKS or membership errors.
 
 The readiness endpoint verifies database connectivity, the membership table, and the configured Supabase JWKS signing keys. It does not validate a real user's JWT or membership; the authenticated end-to-end test is still required.
 

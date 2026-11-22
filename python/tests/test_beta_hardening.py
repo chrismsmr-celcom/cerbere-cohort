@@ -109,6 +109,7 @@ def _connection(fail_times):
     conn = object.__new__(_Connection)
     import threading
     conn._psycopg, conn._lock, conn._in_txn = errors, threading.RLock(), False
+    conn._transaction_lock_held = False
     conn._db = _FakeDb(fail_times, errors)
     conn._connect = lambda: _FakeDb(0, errors)
     return conn, errors
@@ -119,6 +120,41 @@ def test_postgres_reconnects_after_dropped_connection():
     first = conn._db
     assert conn.execute("SELECT 1") == "cursor"
     assert first.closed and conn._db is not first
+
+
+def test_postgres_connection_lock_is_held_until_transaction_finishes():
+    import threading
+
+    conn, _ = _connection(fail_times=0)
+    transaction_started = threading.Event()
+    allow_commit = threading.Event()
+    second_started = threading.Event()
+    second_finished = threading.Event()
+
+    def transaction():
+        conn.execute("BEGIN IMMEDIATE")
+        transaction_started.set()
+        assert allow_commit.wait(timeout=2)
+        conn.commit()
+
+    def concurrent_request():
+        assert transaction_started.wait(timeout=2)
+        second_started.set()
+        conn.execute("SELECT 1")
+        second_finished.set()
+
+    first = threading.Thread(target=transaction)
+    second = threading.Thread(target=concurrent_request)
+    first.start()
+    second.start()
+    assert second_started.wait(timeout=2)
+    assert not second_finished.wait(timeout=0.05)
+    allow_commit.set()
+    first.join(timeout=2)
+    second.join(timeout=2)
+    assert not first.is_alive()
+    assert not second.is_alive()
+    assert second_finished.is_set()
 
 
 def test_postgres_does_not_replay_inside_transaction():
@@ -170,14 +206,17 @@ def test_readiness_checks_database_and_hosted_configuration(monkeypatch):
     from cerbere_cohort import api
 
     class ReadyDatabase:
-        def execute(self, sql):
-            assert sql in {
-                "SELECT 1",
-                "SELECT 1 FROM public.cohort_memberships LIMIT 0",
-            }
+        query = ""
+
+        def execute(self, sql, params=()):
+            self.query = sql
             return self
 
         def fetchone(self):
+            if "information_schema.columns" in self.query:
+                return (len(api._REQUIRED_APPLICATION_SCHEMA_COLUMNS),)
+            if "pg_trigger" in self.query:
+                return (True,)
             return (1,)
 
     monkeypatch.setattr(api, "DATABASE_URL", "postgresql://example")
@@ -195,6 +234,8 @@ def test_readiness_checks_database_and_hosted_configuration(monkeypatch):
         "checks": {
             "database": True,
             "membership_table": True,
+            "application_schema": True,
+            "onboarding_trigger": True,
             "supabase_url": True,
             "supabase_jwks": True,
             "cors_origins": True,
@@ -222,7 +263,47 @@ def test_readiness_fails_closed_when_supabase_or_database_is_unavailable(monkeyp
     assert exc.value.detail["checks"] == {
         "database": False,
         "membership_table": False,
+        "application_schema": False,
+        "onboarding_trigger": False,
         "supabase_url": False,
         "supabase_jwks": False,
         "cors_origins": True,
     }
+
+
+def test_readiness_fails_when_a_later_supabase_migration_is_missing(monkeypatch):
+    from fastapi import HTTPException
+    from cerbere_cohort import api
+
+    class IncompleteDatabase:
+        query = ""
+
+        def execute(self, sql, params=()):
+            self.query = sql
+            return self
+
+        def fetchone(self):
+            if "information_schema.columns" in self.query:
+                return (len(api._REQUIRED_APPLICATION_SCHEMA_COLUMNS) - 1,)
+            if "pg_trigger" in self.query:
+                return (True,)
+            return (1,)
+
+    monkeypatch.setattr(api, "DATABASE_URL", "postgresql://example")
+    monkeypatch.setattr(api, "_membership_connection", IncompleteDatabase())
+    monkeypatch.setattr(api, "_jwks_client", lambda: type("Jwks", (), {"get_signing_keys": lambda self: [object()]})())
+    monkeypatch.setenv("SUPABASE_URL", "https://project.supabase.co")
+    monkeypatch.setenv("COHORT_CORS_ORIGINS", "https://dashboard.example")
+
+    with pytest.raises(HTTPException) as exc:
+        api.ready()
+
+    assert exc.value.status_code == 503
+    assert exc.value.detail["checks"]["application_schema"] is False
+
+
+def test_render_blueprint_enforces_leases_for_hosted_beta():
+    from pathlib import Path
+
+    blueprint = (Path(__file__).resolve().parents[2] / "render.yaml").read_text()
+    assert 'key: COHORT_REQUIRE_LEASES\\n        value: "true"' in blueprint

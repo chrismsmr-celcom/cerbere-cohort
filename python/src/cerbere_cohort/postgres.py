@@ -51,6 +51,7 @@ class _Connection:
         self.schema = schema
         self._lock = threading.RLock()
         self._in_txn = False
+        self._transaction_lock_held = False
         self._db = self._connect()
         if self.schema != "public":
             self._db.execute(f'CREATE SCHEMA IF NOT EXISTS "{self.schema}"')
@@ -150,6 +151,35 @@ class _Connection:
         return cursor
 
     def execute(self, sql: str, params=()):
+        begins_transaction = sql.strip().upper() == "BEGIN IMMEDIATE"
+        if begins_transaction:
+            # Keep the shared connection exclusively owned until commit/rollback.
+            self._lock.acquire()
+            if self._in_txn:
+                self._lock.release()
+                raise RuntimeError("A PostgreSQL transaction is already active on this connection")
+            try:
+                if self._db.closed or getattr(self._db, "broken", False):
+                    self._reconnect()
+                try:
+                    cursor = self._run(sql, params)
+                except (self._psycopg.OperationalError, self._psycopg.InterfaceError):
+                    if self._in_txn:
+                        raise
+                    self._reconnect()
+                    cursor = self._run(sql, params)
+                self._transaction_lock_held = True
+                return cursor
+            except BaseException:
+                if self._in_txn:
+                    try:
+                        self._db.rollback()
+                    except (self._psycopg.OperationalError, self._psycopg.InterfaceError):
+                        self._reconnect()
+                    self._in_txn = False
+                self._lock.release()
+                raise
+
         with self._lock:
             if not self._in_txn and (self._db.closed or getattr(self._db, "broken", False)):
                 self._reconnect()
@@ -157,30 +187,54 @@ class _Connection:
                 return self._run(sql, params)
             except (self._psycopg.OperationalError, self._psycopg.InterfaceError):
                 if self._in_txn:
-                    # Connection lost mid-transaction: the caller must roll back
-                    # and retry; replaying a partial transaction is unsafe.
+                    # Replaying a partially executed transaction is unsafe.
                     raise
                 self._reconnect()
                 return self._run(sql, params)
 
     def commit(self):
-        with self._lock:
-            try:
-                self._db.commit()
-            finally:
-                self._in_txn = False
+        release_transaction_lock = False
+        try:
+            with self._lock:
+                try:
+                    self._db.commit()
+                except BaseException:
+                    try:
+                        self._db.rollback()
+                    except (self._psycopg.OperationalError, self._psycopg.InterfaceError):
+                        self._reconnect()
+                    raise
+                finally:
+                    self._in_txn = False
+                    if getattr(self, "_transaction_lock_held", False):
+                        self._transaction_lock_held = False
+                        release_transaction_lock = True
+        finally:
+            if release_transaction_lock:
+                self._lock.release()
 
     def rollback(self):
-        with self._lock:
-            try:
-                self._db.rollback()
-            except (self._psycopg.OperationalError, self._psycopg.InterfaceError):
-                self._reconnect()  # the server already discarded the transaction
-            finally:
-                self._in_txn = False
+        release_transaction_lock = False
+        try:
+            with self._lock:
+                try:
+                    self._db.rollback()
+                except (self._psycopg.OperationalError, self._psycopg.InterfaceError):
+                    self._reconnect()
+                finally:
+                    self._in_txn = False
+                    if getattr(self, "_transaction_lock_held", False):
+                        self._transaction_lock_held = False
+                        release_transaction_lock = True
+        finally:
+            if release_transaction_lock:
+                self._lock.release()
 
     def close(self):
-        self._db.close()
+        with self._lock:
+            if self._in_txn:
+                self.rollback()
+            self._db.close()
 
 
 class PostgresPersistentWorkspace(PersistentWorkspace):

@@ -542,6 +542,118 @@ def health():
     }
 
 
+# Columns introduced by the ordered Supabase migrations. Readiness fails closed
+# when any migration is missing or only partially applied.
+_REQUIRED_APPLICATION_SCHEMA_COLUMNS = (
+        ("cohort_organizations", "id"),
+        ("cohort_organizations", "name"),
+        ("cohort_organizations", "created_at"),
+        ("cohort_organizations", "account_type"),
+        ("cohort_organizations", "company_size"),
+        ("cohort_organizations", "industry"),
+        ("cohort_organizations", "primary_use_case"),
+        ("cohort_organizations", "expected_agents"),
+        ("cohort_organizations", "frameworks"),
+        ("cohort_organizations", "onboarding_completed_at"),
+        ("cohort_organizations", "legal_name"),
+        ("cohort_organizations", "description"),
+        ("cohort_organizations", "website"),
+        ("cohort_organizations", "country"),
+        ("cohort_organizations", "contact_email"),
+        ("cohort_organizations", "logo_url"),
+        ("cohort_organizations", "brand_color"),
+        ("cohort_organizations", "updated_at"),
+        ("cohort_memberships", "organization_id"),
+        ("cohort_memberships", "user_id"),
+        ("cohort_memberships", "role"),
+        ("cohort_memberships", "status"),
+        ("cohort_memberships", "created_at"),
+        ("cohort_invitations", "id"),
+        ("cohort_invitations", "organization_id"),
+        ("cohort_invitations", "email"),
+        ("cohort_invitations", "role"),
+        ("cohort_invitations", "token_hash"),
+        ("cohort_invitations", "invited_by"),
+        ("cohort_invitations", "expires_at"),
+        ("cohort_invitations", "accepted_at"),
+        ("cohort_invitations", "accepted_by"),
+        ("cohort_invitations", "revoked_at"),
+        ("cohort_invitations", "created_at"),
+        ("cohort_agent_credentials", "id"),
+        ("cohort_agent_credentials", "organization_id"),
+        ("cohort_agent_credentials", "agent_id"),
+        ("cohort_agent_credentials", "name"),
+        ("cohort_agent_credentials", "token_hash"),
+        ("cohort_agent_credentials", "scopes"),
+        ("cohort_agent_credentials", "created_by"),
+        ("cohort_agent_credentials", "expires_at"),
+        ("cohort_agent_credentials", "last_used_at"),
+        ("cohort_agent_credentials", "revoked_at"),
+        ("cohort_agent_credentials", "created_at"),
+        ("cohort_permissions", "key"),
+        ("cohort_permissions", "description"),
+        ("cohort_roles", "id"),
+        ("cohort_roles", "organization_id"),
+        ("cohort_roles", "name"),
+        ("cohort_roles", "is_system"),
+        ("cohort_roles", "created_by"),
+        ("cohort_roles", "created_at"),
+        ("cohort_role_permissions", "role_id"),
+        ("cohort_role_permissions", "permission_key"),
+        ("cohort_audit_logs", "id"),
+        ("cohort_audit_logs", "organization_id"),
+        ("cohort_audit_logs", "actor_user_id"),
+        ("cohort_audit_logs", "action"),
+        ("cohort_audit_logs", "target_type"),
+        ("cohort_audit_logs", "target_id"),
+        ("cohort_audit_logs", "metadata"),
+        ("cohort_audit_logs", "created_at"),
+        ("cohort_domains", "id"),
+        ("cohort_domains", "organization_id"),
+        ("cohort_domains", "domain"),
+        ("cohort_domains", "verified_at"),
+        ("cohort_domains", "auto_join"),
+        ("cohort_domains", "require_admin_approval"),
+        ("cohort_domains", "created_at"),
+        ("cohort_sso_configs", "id"),
+        ("cohort_sso_configs", "organization_id"),
+        ("cohort_sso_configs", "protocol"),
+        ("cohort_sso_configs", "issuer"),
+        ("cohort_sso_configs", "metadata_url"),
+        ("cohort_sso_configs", "client_id"),
+        ("cohort_sso_configs", "encrypted_client_secret"),
+        ("cohort_sso_configs", "enabled"),
+        ("cohort_sso_configs", "enforce_sso"),
+        ("cohort_sso_configs", "created_at"),
+        ("cohort_sso_configs", "updated_at"),
+        ("cohort_user_profiles", "user_id"),
+        ("cohort_user_profiles", "full_name"),
+        ("cohort_user_profiles", "job_title"),
+        ("cohort_user_profiles", "created_at"),
+        ("cohort_user_profiles", "updated_at"),
+)
+
+
+def _application_schema_ready(connection) -> bool:
+    values = ", ".join(["(?, ?)"] * len(_REQUIRED_APPLICATION_SCHEMA_COLUMNS))
+    params = tuple(value for pair in _REQUIRED_APPLICATION_SCHEMA_COLUMNS for value in pair)
+    row = connection.execute(
+        "SELECT COUNT(*) FROM information_schema.columns "
+        "WHERE table_schema = 'public' AND (table_name, column_name) IN (" + values + ")",
+        params,
+    ).fetchone()
+    return bool(row and int(row[0]) == len(_REQUIRED_APPLICATION_SCHEMA_COLUMNS))
+
+
+def _onboarding_trigger_ready(connection) -> bool:
+    row = connection.execute(
+        "SELECT EXISTS (SELECT 1 FROM pg_trigger "
+        "WHERE tgname = ? AND NOT tgisinternal)",
+        ("cohort_auth_user_workspace_bootstrap",),
+    ).fetchone()
+    return bool(row and row[0])
+
+
 @app.get("/api/ready")
 def ready():
     """Readiness check: verify database connectivity and required hosted config."""
@@ -567,6 +679,14 @@ def ready():
             checks["membership_table"] = True
         except Exception:
             logger.exception("Readiness membership schema check failed")
+        try:
+            checks["application_schema"] = _application_schema_ready(_membership_connection)
+        except Exception:
+            logger.exception("Readiness application schema check failed")
+        try:
+            checks["onboarding_trigger"] = _onboarding_trigger_ready(_membership_connection)
+        except Exception:
+            logger.exception("Readiness onboarding trigger check failed")
     if hosted and checks["supabase_url"]:
         try:
             if not _jwks_client().get_signing_keys():
