@@ -7,9 +7,11 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import ipaddress
 import json
 import os
 import re
+import socket
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
@@ -159,10 +161,35 @@ def build_otlp_payload(events: Iterable[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def _assert_public_endpoint(endpoint: str) -> None:
+    """Reject localhost/private destinations before sending tenant credentials."""
+    host = urlparse(endpoint).hostname or ""
+    if host.lower() == "localhost" or host.lower().endswith((".localhost", ".local")):
+        raise ValueError("OTLP endpoint must use a public hostname")
+    try:
+        addresses = {ipaddress.ip_address(host)}
+    except ValueError:
+        try:
+            addresses = {
+                ipaddress.ip_address(item[4][0])
+                for item in socket.getaddrinfo(host, 443, type=socket.SOCK_STREAM)
+            }
+        except OSError as exc:
+            raise RuntimeError("OTLP endpoint hostname could not be resolved") from exc
+    if not addresses or any(not address.is_global for address in addresses):
+        raise ValueError("OTLP endpoint must resolve only to public IP addresses")
+
+
+class _RejectRedirects(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
 def send_otlp_logs(endpoint: str, headers: dict[str, str],
                    events: Iterable[dict[str, Any]], timeout: float = 5.0) -> None:
     """Send a batch to an OTLP/HTTP logs endpoint; raise on any non-2xx response."""
     normalized = normalize_otlp_endpoint(endpoint)
+    _assert_public_endpoint(normalized)
     payload = build_otlp_payload(events)
     if not payload["resourceLogs"][0]["scopeLogs"][0]["logRecords"]:
         return
@@ -177,7 +204,8 @@ def send_otlp_logs(endpoint: str, headers: dict[str, str],
         headers=request_headers, method="POST",
     )
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        opener = urllib.request.build_opener(_RejectRedirects())
+        with opener.open(request, timeout=timeout) as response:
             if not 200 <= response.status < 300:
                 raise RuntimeError(f"OTLP endpoint returned HTTP {response.status}")
     except urllib.error.HTTPError as exc:
