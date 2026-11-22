@@ -145,3 +145,68 @@ def test_branch_value_is_bounded():
     assert BranchWrite(key="k", value={"ok": True}).value == {"ok": True}
     with pytest.raises(ValidationError):
         BranchWrite(key="k", value="x" * (MAX_VALUE_BYTES + 1))
+
+
+
+def test_health_reports_safe_hosted_configuration(monkeypatch):
+    from cerbere_cohort import api
+
+    monkeypatch.setattr(api, "DATABASE_URL", "postgresql://example")
+    monkeypatch.setenv("SUPABASE_URL", "https://project.supabase.co")
+    monkeypatch.setenv("COHORT_CORS_ORIGINS", "https://dashboard.example")
+    result = api.health()
+
+    assert result["authentication"] == "supabase"
+    assert result["tenant_isolation"] == "postgresql_schema_per_organization"
+    assert result["single_instance_required"] is True
+    assert result["configuration"] == {
+        "database_configured": True,
+        "supabase_url_configured": True,
+        "cors_origins_configured": True,
+    }
+
+
+def test_readiness_checks_database_and_hosted_configuration(monkeypatch):
+    from cerbere_cohort import api
+
+    class ReadyDatabase:
+        def execute(self, sql):
+            assert sql == "SELECT 1"
+            return self
+
+        def fetchone(self):
+            return (1,)
+
+    monkeypatch.setattr(api, "DATABASE_URL", "postgresql://example")
+    monkeypatch.setattr(api, "_membership_connection", ReadyDatabase())
+    monkeypatch.setenv("SUPABASE_URL", "https://project.supabase.co")
+    monkeypatch.setenv("COHORT_CORS_ORIGINS", "https://dashboard.example")
+
+    assert api.ready() == {
+        "ok": True,
+        "checks": {"database": True, "supabase_url": True, "cors_origins": True},
+    }
+
+
+def test_readiness_fails_closed_when_supabase_or_database_is_unavailable(monkeypatch):
+    from fastapi import HTTPException
+    from cerbere_cohort import api
+
+    class BrokenDatabase:
+        def execute(self, sql):
+            raise RuntimeError("database unavailable")
+
+    monkeypatch.setattr(api, "DATABASE_URL", "postgresql://example")
+    monkeypatch.setattr(api, "_membership_connection", BrokenDatabase())
+    monkeypatch.delenv("SUPABASE_URL", raising=False)
+    monkeypatch.setenv("COHORT_CORS_ORIGINS", "https://dashboard.example")
+
+    with pytest.raises(HTTPException) as exc:
+        api.ready()
+
+    assert exc.value.status_code == 503
+    assert exc.value.detail["checks"] == {
+        "database": False,
+        "supabase_url": False,
+        "cors_origins": True,
+    }
