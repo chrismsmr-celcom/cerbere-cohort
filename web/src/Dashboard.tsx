@@ -23,7 +23,7 @@ import Settings from "./pages/Settings";
 import "./styles/app.css";
 
 const TABS: Record<Tab, string> = { overview: "Overview", branches: "Branches", state: "Shared state", leases: "Leases", events: "Event log", gateway: "Gateway", performance: "Performance", advisor: "Advisor", coordination: "Coordination", settings: "Setting" };
-const readTab = (): Tab => { const h = window.location.hash.replace(/^#\\/?/, "") as Tab; return h in TABS ? h : "overview"; };
+const readTab = (): Tab => { const h = window.location.hash.replace(/^#\/?/, "") as Tab; return h in TABS ? h : "overview"; };
 const stored = <T extends string>(key: string, allowed: T[], fallback: T): T => { try { const v = localStorage.getItem(key) as T | null; return v && allowed.includes(v) ? v : fallback; } catch { return fallback; } };
 
 type Modalish = { kind: "create" } | { kind: "resolve"; branch: Branch } | { kind: "write"; branch: Branch } | { kind: "diff"; branch: Branch } | { kind: "plans" } | { kind: "cerbere" } | { kind: "palette" } | { kind: "inspector"; index: number } | null;
