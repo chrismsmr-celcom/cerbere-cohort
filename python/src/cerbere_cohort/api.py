@@ -255,7 +255,7 @@ def complete_workspace_onboarding(
                 (body.workspace_name, body.account_type,
                  body.company_size if body.account_type != "individual" else None,
                  body.industry, body.primary_use_case, body.expected_agents,
-                 Jsonb(body.frameworks)),
+                 body.frameworks),
             ).fetchone()
             organization_id = str(created["id"])
             _membership_connection.execute(
