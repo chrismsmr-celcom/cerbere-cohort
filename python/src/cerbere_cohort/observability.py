@@ -21,8 +21,7 @@ from urllib.parse import urlparse
 
 _SAFE_PAYLOAD_FIELDS = {
     "branch_name", "base_version", "head_version", "expected_head_version",
-    "actual_head_version", "merge_type", "conflicting_keys", "unresolved_keys",
-    "resource_key", "duration_seconds", "expires_at", "fencing_token",
+    "actual_head_version", "merge_type", "duration_seconds", "expires_at", "fencing_token",
     "reason", "resolver", "choice_hash", "parent_version", "version_id",
 }
 _HEADER_NAME = re.compile(r"^[!#$%&'*+.^_`|~0-9A-Za-z-]{1,128}$")
@@ -65,9 +64,15 @@ def validate_headers(headers: dict[str, str]) -> dict[str, str]:
     if not isinstance(headers, dict) or len(headers) > 10:
         raise ValueError("Provide at most 10 HTTP headers")
     clean: dict[str, str] = {}
+    seen: set[str] = set()
+    reserved = {"host", "content-length", "transfer-encoding", "connection", "proxy-authorization"}
     for name, value in headers.items():
         if not isinstance(name, str) or not _HEADER_NAME.fullmatch(name):
             raise ValueError("Invalid HTTP header name")
+        normalized_name = name.lower()
+        if normalized_name in reserved or normalized_name in seen:
+            raise ValueError(f"HTTP header {name} cannot be overridden")
+        seen.add(normalized_name)
         if not isinstance(value, str) or not value or len(value) > 4096:
             raise ValueError(f"Invalid value for HTTP header {name}")
         if "\r" in value or "\n" in value:
@@ -108,8 +113,15 @@ def _safe_attributes(event: dict[str, Any]) -> list[dict[str, Any]]:
             value = payload.get(key)
             if isinstance(value, (str, bool, int, float)):
                 attributes[f"cohort.{key}"] = value
-            elif isinstance(value, list) and all(isinstance(item, str) for item in value):
-                attributes[f"cohort.{key}"] = ", ".join(value[:50])
+        resource_key = payload.get("resource_key")
+        if isinstance(resource_key, str):
+            attributes["cohort.resource_key_hash"] = hashlib.sha256(
+                resource_key.encode("utf-8")
+            ).hexdigest()[:16]
+        for key in ("conflicting_keys", "unresolved_keys"):
+            values = payload.get(key)
+            if isinstance(values, list):
+                attributes[f"cohort.{key.removesuffix('_keys')}_count"] = len(values)
     result = []
     for key, value in attributes.items():
         if value is None:
