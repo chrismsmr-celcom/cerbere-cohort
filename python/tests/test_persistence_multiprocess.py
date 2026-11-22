@@ -2,6 +2,8 @@
 
 import multiprocessing
 
+import pytest
+
 from cerbere_cohort import ConflictError
 from cerbere_cohort.persistence import PersistentWorkspace
 
