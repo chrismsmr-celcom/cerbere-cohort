@@ -16,11 +16,11 @@ ALTER TABLE public.cohort_organizations
 -- Upload, replacement and deletion remain restricted to workspace owners/admins.
 INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
 VALUES ('cohort-organization-logos', 'cohort-organization-logos', true, 2097152,
-        ARRAY['image/png', 'image/jpeg', 'image/webp', 'image/svg+xml'])
+        ARRAY['image/png', 'image/jpeg', 'image/webp'])
 ON CONFLICT (id) DO UPDATE SET
     public = true,
     file_size_limit = 2097152,
-    allowed_mime_types = ARRAY['image/png', 'image/jpeg', 'image/webp', 'image/svg+xml'];
+    allowed_mime_types = ARRAY['image/png', 'image/jpeg', 'image/webp'];
 
 DROP POLICY IF EXISTS cohort_org_logo_insert ON storage.objects;
 CREATE POLICY cohort_org_logo_insert ON storage.objects
