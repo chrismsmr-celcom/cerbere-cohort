@@ -30,6 +30,7 @@ from cerbere_cohort.auth import (
     require_workspace_member,
     authenticate_agent_token,
     _decode_access_token,
+    _jwks_client,
     require_workspace_read_access,
     require_workspace_write_access,
     require_lease_read_access,
@@ -458,6 +459,7 @@ def ready():
     checks = {
         "database": False,
         "supabase_url": not hosted or bool(os.getenv("SUPABASE_URL", "").strip()),
+        "supabase_jwks": not hosted,
         "cors_origins": not hosted or (bool(origins) and "*" not in origins),
     }
     try:
@@ -465,6 +467,13 @@ def ready():
         checks["database"] = True
     except Exception:
         logger.exception("Readiness database check failed")
+    if hosted and checks["supabase_url"]:
+        try:
+            if not _jwks_client().get_signing_keys():
+                raise RuntimeError("Supabase JWKS endpoint returned no signing keys")
+            checks["supabase_jwks"] = True
+        except Exception:
+            logger.exception("Readiness Supabase JWKS check failed")
     if not all(checks.values()):
         raise HTTPException(
             status_code=503,
