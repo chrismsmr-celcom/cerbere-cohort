@@ -23,6 +23,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator, model_validator
 from cerbere_cohort.workspace import Branch, Workspace, _MISSING
+from cerbere_cohort.events import event_actor
 from cerbere_cohort.telemetry import send_installation_ping
 from cerbere_cohort.auth import (
     configure_membership_db,
@@ -414,46 +415,6 @@ def _require_agent_identity(context: dict[str, Any], requested_agent_id: str) ->
     if context.get("principal_type") == "agent" and context.get("agent_id") != requested_agent_id:
         raise HTTPException(status_code=403, detail="Agent credentials cannot act as another agent")
 
-def _event_ids() -> set[str]:
-    """Snapshot event IDs before an API mutation so its audit actor can be stamped."""
-    return {event.event_id for event in workspace.get_events()}
-
-
-def _stamp_event_actor(context: dict[str, Any], previous_ids: set[str]) -> None:
-    """Record who initiated an operation separately from the agent it concerns.
-
-    event.agent_id remains the affected runtime agent for compatibility;
-    metadata.actor records the authenticated principal.
-    """
-    actor_type = context.get("principal_type") or ("agent" if context.get("agent_id") else "user")
-    actor_id = context.get("agent_id") if actor_type == "agent" else context.get("user_id")
-    if not actor_id:
-        return
-    runtime = workspace._workspace
-    events = runtime._events
-    changed = []
-    for index, event in enumerate(events):
-        if event.event_id in previous_ids:
-            continue
-        metadata = dict(event.metadata or {})
-        metadata["actor"] = {
-            "type": actor_type,
-            "id": str(actor_id),
-            "credential_id": context.get("credential_id") if actor_type == "agent" else None,
-        }
-        updated = event.model_copy(update={"metadata": metadata})
-        events[index] = updated
-        changed.append(updated)
-    if changed:
-        conn = workspace._conn
-        for event in changed:
-            conn.execute(
-                "UPDATE events SET metadata_json = ? WHERE event_id = ?",
-                (json.dumps(event.metadata, ensure_ascii=False), event.event_id),
-            )
-        conn.commit()
-
-
 def _branch_summary(branch_id: str, item: dict[str, Any]) -> dict[str, Any]:
     branch = item["branch"]
     return {
@@ -603,9 +564,8 @@ def create_branch(body: BranchCreate, context: dict[str, Any] = Depends(require_
     branch_id = str(uuid.uuid4())
     try:
         with _lock:
-            previous_event_ids = _event_ids()
-            branch = workspace.create_branch(body.agent_id, body.name)
-            _stamp_event_actor(context, previous_event_ids)
+            with event_actor(context):
+                branch = workspace.create_branch(body.agent_id, body.name)
     except Exception as exc:
         raise HTTPException(400, str(exc)) from exc
     with _lock:
@@ -647,19 +607,17 @@ def commit_branch(
         item = _branches.get(branch_id)
         if not item or item["status"] != "open" or not _agent_owns(context, item["agent_id"]):
             raise HTTPException(404, "Open branch not found")
-        previous_event_ids = _event_ids()
         try:
-            snapshot = workspace.commit(
-                item["agent_id"], item["branch"],
-                expected_head_version=body.expected_head_version if body else None,
-            )
-            _stamp_event_actor(context, previous_event_ids)
+            with event_actor(context):
+                snapshot = workspace.commit(
+                    item["agent_id"], item["branch"],
+                    expected_head_version=body.expected_head_version if body else None,
+                )
             item["status"] = "merged"
             item["conflicting_keys"] = []
             _save_api_branch(branch_id, item)
             return {"ok": True, "head": snapshot.version_id, "branch": _branch_summary(branch_id, item)}
         except ConflictError as exc:
-            _stamp_event_actor(context, previous_event_ids)
             item["conflicting_keys"] = list(exc.conflicting_keys)
             _save_api_branch(branch_id, item)
             return {
@@ -742,16 +700,14 @@ def resolve_branch(branch_id: str, body: ResolveRequest, context: dict[str, Any]
                     value=decision.value,
                     rationale=body.rationale,
                 )
-        previous_event_ids = _event_ids()
         try:
-            snapshot = workspace.commit(item["agent_id"], item["branch"], resolver=AuditedResolver())
-            _stamp_event_actor(context, previous_event_ids)
+            with event_actor(context):
+                snapshot = workspace.commit(item["agent_id"], item["branch"], resolver=AuditedResolver())
             item["status"] = "merged"
             item["conflicting_keys"] = []
             _save_api_branch(branch_id, item)
             return {"ok": True, "head": snapshot.version_id, "branch": _branch_summary(branch_id, item)}
         except ConflictError as exc:
-            _stamp_event_actor(context, previous_event_ids)
             item["conflicting_keys"] = list(exc.conflicting_keys)
             _save_api_branch(branch_id, item)
             raise HTTPException(409, detail={"message": str(exc), "conflicting_keys": list(exc.conflicting_keys)}) from exc
@@ -806,9 +762,8 @@ def acquire_lease(body: LeaseRequest, context: dict[str, Any] = Depends(require_
     _require_agent_identity(context, body.agent_id)
     try:
         with _lock:
-            previous_event_ids = _event_ids()
-            lease = workspace.acquire_lease(body.agent_id, body.key, body.duration_seconds)
-            _stamp_event_actor(context, previous_event_ids)
+            with event_actor(context):
+                lease = workspace.acquire_lease(body.agent_id, body.key, body.duration_seconds)
     except LeaseError as exc:
         raise HTTPException(409, detail={"message": str(exc), "code": exc.code, "details": exc.details}) from exc
     return {
@@ -825,9 +780,8 @@ def release_lease(key: str, agent_id: str, context: dict[str, Any] = Depends(req
     _require_agent_identity(context, agent_id)
     try:
         with _lock:
-            previous_event_ids = _event_ids()
-            workspace.release_lease(agent_id, key)
-            _stamp_event_actor(context, previous_event_ids)
+            with event_actor(context):
+                workspace.release_lease(agent_id, key)
     except LeaseError as exc:
         raise HTTPException(409, detail={"message": str(exc), "code": exc.code}) from exc
     return {"ok": True}
