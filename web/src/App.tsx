@@ -192,17 +192,39 @@ function SplitAuthScreen({ mode, email, busy, sent, message, onEmailChange, onSu
         </p>
         <p className="auth-legal">By continuing, you agree to Cohort’s Terms of Service and Privacy Policy.</p>
       </div></section>
-      <aside className="auth-art-panel" aria-label="Cohort animated blocks">
-        <div className="auth-art-glow" />
-        <div className="auth-art-copy"><div className="auth-art-kicker"><span /> MULTI-AGENT COORDINATION</div>
-          <h2>Independent agents.<br /><em>One coordinated system.</em></h2>
+      <aside className="auth-art-panel" aria-label="How Cohort coordinates agents">
+        <div className="auth-art-copy">
+          <a className="auth-art-brand" href="/" aria-label="Cohort home">
+            <img src={cohortLogo} alt="" width="30" height="30" />
+            <span>cohort</span><small>by Cerbère</small>
+          </a>
+          <div className="auth-art-kicker"><span /> MULTI-AGENT COORDINATION INFRASTRUCTURE</div>
+          <h2>Independent agents.<br /><em>One coordinated</em> system.</h2>
           <p>Shared state. Clear ownership. Reliable execution.</p>
         </div>
-        <div className="brick-stage" aria-hidden="true"><div className="brick-floor" /><div className="brick-stack">
-          <i className="brick b1" /><i className="brick b2" /><i className="brick b3" /><i className="brick b4" />
-          <i className="brick b5" /><i className="brick b6" /><i className="brick b7" /><i className="brick b8" />
-          <i className="brick b9" /><i className="brick b10" /><i className="brick b11" /><i className="brick b12" />
-        </div></div>
+        <div className="coord-visual" aria-label="Agent A and Agent B coordinate through shared state">
+          <div className="coord-agents">
+            <div className="coord-agent coord-agent-a">
+              <span className="coord-agent-label">WORKER 01</span>
+              <strong>Agent A</strong>
+              <small>Lease expired</small>
+              <span className="coord-token">TOKEN 41</span>
+            </div>
+            <div className="coord-link"><span /><span /><span /></div>
+            <div className="coord-agent coord-agent-b">
+              <span className="coord-agent-label">WORKER 02</span>
+              <strong>Agent B</strong>
+              <small>Owns current task</small>
+              <span className="coord-token">TOKEN 42</span>
+            </div>
+          </div>
+          <div className="coord-state">
+            <div className="coord-state-head"><span className="coord-state-dot" /> SHARED STATE <span className="coord-revision">REVISION 12</span></div>
+            <div className="coord-state-row"><span>Ownership transferred</span><strong>Confirmed</strong></div>
+            <div className="coord-state-row coord-rejected"><span>Stale write · token 41</span><strong>Rejected</strong></div>
+          </div>
+          <p className="coord-caption">FENCING TOKENS PREVENT STALE WORKERS FROM OVERWRITING NEWER STATE</p>
+        </div>
         <div className="auth-art-footer"><span>COHORT BY CERBÈRE</span><span>BUILD WITH CONTROL.</span></div>
       </aside>
     </main>
