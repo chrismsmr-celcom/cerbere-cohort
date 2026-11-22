@@ -28,7 +28,7 @@ Run this checklist once for each production environment and again after changing
 - [ ] Never put a Supabase service-role key, database password, or other server secret in a `VITE_*` variable.
 - [ ] Optional: set `VITE_API_TIMEOUT_MS` (1,000–180,000 ms). Default: 90,000 ms. The client does not automatically retry timed-out mutations because the server may already have processed them.
 - [ ] Sign in with a non-member account (expect 403), then with an active member.
-- [ ] Walk the full golden path with two agent identities: create branch → acquire lease → write → commit; then create competing branches, confirm the second commit reports a conflict, inspect it, resolve it, and verify the final shared state.
+- [ ] Walk the full golden path with two agent identities: create two competing branches from the same head → Agent A acquires lease, writes, commits and releases → Agent B acquires the lease and writes through its older branch → second commit reports a conflict → inspect, resolve, and verify final shared state.
 - [ ] Open the Coordination, Branches, Leases, Shared state, and Event log pages with real workspace data. Confirm counts and ownership match the API; confirm empty states work in a fresh workspace.
 - [ ] Use only synthetic test data. Do not enter secrets, credentials, personal data, customer data, or production workloads.
 

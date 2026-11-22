@@ -83,7 +83,7 @@ Vite embeds `VITE_*` values in public browser assets. Never use a service-role k
 2. Open `https://YOUR-API/api/ready`. It must return HTTP 200 with `database`, `membership_table`, `application_schema`, `onboarding_trigger`, `supabase_url`, `supabase_jwks`, and `cors_origins` checks all true. The application-schema check covers the columns introduced by every committed Supabase migration.
 3. Open `https://YOUR-API/docs` and inspect the actual OpenAPI schemas.
 4. Sign in through the dashboard. Confirm a non-member receives 403 and an active member can read workspace state.
-5. With two distinct agent credentials, acquire a lease before each write. Create two branches from the same base, write different values to the same key, commit the first, and confirm the second reports a conflict. Inspect and resolve it; verify the final state and event history.
+5. With two distinct agent credentials, create both branches from the same head before either commit. Agent A acquires the lease, writes, commits, and releases it. Agent B then acquires the lease and writes through its older branch. Its commit must report a conflict. Inspect and resolve it; verify the final state and event history.
 6. Repeat the same API flow in a second organization and confirm it cannot read or mutate the first organization state.
 7. Restart the API and confirm persisted workspace state and open branches are restored.
 8. Confirm Render is running exactly one instance and the deployment logs show no database/JWKS or membership errors.

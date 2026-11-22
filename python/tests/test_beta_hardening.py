@@ -307,3 +307,19 @@ def test_render_blueprint_enforces_leases_for_hosted_beta():
 
     blueprint = (Path(__file__).resolve().parents[2] / "render.yaml").read_text()
     assert "key: COHORT_REQUIRE_LEASES\n        value: \"true\"" in blueprint
+
+
+
+def test_readiness_rejects_a_disabled_signup_trigger(monkeypatch):
+    from cerbere_cohort import api
+
+    class DisabledTriggerDatabase:
+        def execute(self, sql, params=()):
+            assert "tgenabled IN ('O', 'A')" in sql
+            assert "auth.users" in sql
+            return self
+
+        def fetchone(self):
+            return (False,)
+
+    assert api._onboarding_trigger_ready(DisabledTriggerDatabase()) is False

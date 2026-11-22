@@ -9,10 +9,10 @@ The most useful test is two or more agents working from the same workspace:
 1. Sign in to the hosted dashboard and select your workspace.
 2. Create separate agent credentials for each agent. Keep the credentials private; never paste them into an issue or event payload.
 3. Connect through the REST API. Use the workspace ID in `X-Organization-ID` and the agent credential as a Bearer token.
-4. Acquire a lease for a key before writing that key. Hosted beta runs with lease enforcement enabled.
-5. Create a branch, write a value, and commit it.
-6. Create a second branch from the same base and write a different value to the same key.
-7. Commit the second branch. It should report a conflict, not silently overwrite the first value.
+4. Create two branches from the same workspace head before either branch is committed.
+5. Agent A acquires a lease for the shared key, writes its value, commits, and releases the lease.
+6. Agent B acquires the same key's lease and writes a different value through its older branch.
+7. Agent B commits. Cohort should report a conflict, not silently overwrite Agent A's value.
 8. Inspect the conflict, resolve it explicitly, and verify the resulting value in Shared state and the Event log.
 9. Open the Coordination page and confirm its agent, lease, branch, and event information matches the workspace.
 

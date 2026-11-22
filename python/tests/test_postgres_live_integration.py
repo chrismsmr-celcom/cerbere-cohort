@@ -77,11 +77,11 @@ def test_organization_schemas_are_isolated_and_leases_are_enforced(migrated_data
         assert workspace_a.head.data["shared_status"] == "org-a"
         assert workspace_b.head.data["shared_status"] == "org-b"
 
-        branch = workspace_a.create_branch("agent-a", "write-with-lease")
         with pytest.raises(LeaseError):
-            branch.set("shared_status", "unleased-write")
+            workspace_a.create_branch("agent-a", "unleased-write").set("shared_status", "unleased-write")
 
         workspace_a.acquire_lease("agent-a", "shared_status", duration_seconds=60)
+        branch = workspace_a.create_branch("agent-a", "write-with-lease")
         branch.set("shared_status", "org-a-updated")
         workspace_a.commit("agent-a", branch)
 
