@@ -306,4 +306,4 @@ def test_render_blueprint_enforces_leases_for_hosted_beta():
     from pathlib import Path
 
     blueprint = (Path(__file__).resolve().parents[2] / "render.yaml").read_text()
-    assert 'key: COHORT_REQUIRE_LEASES\\n        value: "true"' in blueprint
+    assert "key: COHORT_REQUIRE_LEASES\n        value: \"true\"" in blueprint

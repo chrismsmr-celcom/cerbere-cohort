@@ -85,10 +85,10 @@ Vite embeds `VITE_*` values in public browser assets. Never use a service-role k
 4. Sign in through the dashboard. Confirm a non-member receives 403 and an active member can read workspace state.
 5. With two distinct agent credentials, acquire a lease before each write. Create two branches from the same base, write different values to the same key, commit the first, and confirm the second reports a conflict. Inspect and resolve it; verify the final state and event history.
 6. Repeat the same API flow in a second organization and confirm it cannot read or mutate the first organization state.
-6. Restart the API and confirm persisted workspace state and open branches are restored.
+7. Restart the API and confirm persisted workspace state and open branches are restored.
 8. Confirm Render is running exactly one instance and the deployment logs show no database/JWKS or membership errors.
 
-The readiness endpoint verifies database connectivity, the membership table, and the configured Supabase JWKS signing keys. It does not validate a real user's JWT or membership; the authenticated end-to-end test is still required.
+The readiness endpoint verifies database connectivity, required application tables and columns, the signup workspace-provisioning trigger, and the configured Supabase JWKS signing keys. It does not validate a real user's JWT or membership; the authenticated end-to-end test is still required.
 
 ## 5. Current operational limits
 

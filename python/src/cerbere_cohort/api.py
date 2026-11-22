@@ -662,6 +662,8 @@ def ready():
     checks = {
         "database": False,
         "membership_table": not hosted,
+        "application_schema": not hosted,
+        "onboarding_trigger": not hosted,
         "supabase_url": not hosted or bool(os.getenv("SUPABASE_URL", "").strip()),
         "supabase_jwks": not hosted,
         "cors_origins": not hosted or (bool(origins) and "*" not in origins),
