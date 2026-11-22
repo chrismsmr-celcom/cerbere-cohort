@@ -35,12 +35,13 @@ export default function OrganizationProfileModal({ workspace, onClose, onSaved }
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState("");
+  const [initialLogoUrl, setInitialLogoUrl] = useState<string | null>(null);
   const canEdit = ["owner", "admin"].includes(workspace.role);
 
   useEffect(() => {
     let active = true;
     void api<{ profile: Profile }>("/workspace/profile")
-      .then((result) => { if (active) setProfile({ ...emptyProfile(workspace), ...result.profile }); })
+      .then((result) => { if (active) { setProfile({ ...emptyProfile(workspace), ...result.profile }); setInitialLogoUrl(result.profile.logo_url || null); } })
       .catch((err) => { if (active) setError(err instanceof Error ? err.message : "Unable to load organization profile."); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
@@ -104,6 +105,13 @@ export default function OrganizationProfileModal({ workspace, onClose, onSaved }
           brand_color: profile.brand_color || null,
         }),
       });
+      if (initialLogoUrl && initialLogoUrl !== result.profile.logo_url && supabase) {
+        const storageBase = `${(import.meta as any).env?.VITE_SUPABASE_URL}/storage/v1/object/public/cohort-organization-logos/`;
+        if (initialLogoUrl.startsWith(storageBase)) {
+          const oldPath = initialLogoUrl.slice(storageBase.length);
+          if (oldPath) await supabase.storage.from("cohort-organization-logos").remove([decodeURIComponent(oldPath)]).catch(() => undefined);
+        }
+      }
       onSaved(result.profile);
       onClose();
     } catch (err) {
