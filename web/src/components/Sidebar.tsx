@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Cable, Building2, ChevronsUpDown, Database, Gauge, GitBranch, LayoutDashboard, Lightbulb, LogOut, Lock, Moon, PanelLeft, ScrollText, Settings, Sparkles, Sun, TrendingUp } from "lucide-react";
+import { Cable, Activity, Building2, ChevronsUpDown, Database, Gauge, GitBranch, LayoutDashboard, Lightbulb, LogOut, Lock, Moon, PanelLeft, ScrollText, Settings, Sparkles, Sun } from "lucide-react";
 import type { ReactNode } from "react";
 import type { Tab } from "../lib/types";
 import type { CohortWorkspace } from "../auth";
@@ -52,7 +52,7 @@ export default function Sidebar(props: {
         {item("gateway", "Gateway", <Cable size={18} />)}
         {item("performance", "Performance", <Gauge size={18} />)}
         {item("advisor", "Advisor", <Lightbulb size={18} />)}
-        {item("traction", "Traction", <TrendingUp size={18} />)}
+        {item("coordination", "Coordination", <Activity size={18} />)}
         {item("settings", "Setting", <Settings size={18} />)}
       </nav>
       <div className="side-foot">
