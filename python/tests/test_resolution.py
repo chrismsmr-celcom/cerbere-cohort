@@ -243,3 +243,24 @@ def test_gives_up_without_overwriting_if_head_keeps_moving():
     assert ws.head.data["spec"] == "par A" and "extra" not in ws.head.data
     abort = [e for e in ws.get_events() if e.action == "coordination.aborted"][-1]
     assert abort.payload["reason"] == "head_kept_moving"
+
+
+def test_nested_path_resolution_is_applied_and_replayed():
+    ws = Workspace()
+    ws.seed({"config": {"status": "pending", "owner": "A"}})
+    a, b = ws.create_branch("A", "nested-a"), ws.create_branch("B", "nested-b")
+    a.set("config", {"status": "completed", "owner": "A"})
+    b.set("config", {"status": "failed", "owner": "B"})
+    ws.commit("A", a)
+
+    ws.commit("B", b, resolver=PreferBranch())
+
+    assert ws.head.data["config"] == {"status": "failed", "owner": "B"}
+    resolution = [
+        event for event in ws.get_events()
+        if event.action == "coordination.resolved"
+    ][0]
+    assert resolution.payload["key"] == "json-pointer:/config/status"
+    replayed = Workspace.replay(ws.get_events(), ws.store)
+    assert replayed.head.version_id == ws.head.version_id
+    assert replayed.head.data == ws.head.data

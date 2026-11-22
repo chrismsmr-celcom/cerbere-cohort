@@ -144,3 +144,76 @@ def test_legacy_event_without_schema_version_is_readable():
     event = CerbereCohortEvent.from_jsonl(legacy)
 
     assert event.schema_version == "1.0.0"
+
+
+# --- Nested JSON merge ---------------------------------------------------------------
+
+def test_disjoint_nested_object_changes_merge_without_conflict():
+    ws = seeded(config={"status": "pending", "owner": "agent-a"})
+    a, b = ws.create_branch("A", "nested-a"), ws.create_branch("B", "nested-b")
+    a.set("config", {"status": "completed", "owner": "agent-a"})
+    b.set("config", {"status": "pending", "owner": "agent-b"})
+
+    ws.commit("A", a)
+    ws.commit("B", b)
+
+    assert ws.head.data["config"] == {
+        "status": "completed",
+        "owner": "agent-b",
+    }
+
+
+def test_same_nested_leaf_conflicts_and_preserves_head():
+    ws = seeded(config={"status": "pending", "owner": "agent-a"})
+    a, b = ws.create_branch("A", "nested-a"), ws.create_branch("B", "nested-b")
+    a.set("config", {"status": "completed", "owner": "agent-a"})
+    b.set("config", {"status": "failed", "owner": "agent-a"})
+
+    ws.commit("A", a)
+    head_before = ws.head.version_id
+    with pytest.raises(ConflictError) as exc:
+        ws.commit("B", b)
+
+    assert exc.value.conflicting_keys == ["json-pointer:/config/status"]
+    assert ws.head.version_id == head_before
+    assert ws.head.data["config"]["status"] == "completed"
+
+
+def test_concurrent_creation_of_disjoint_object_fields_merges():
+    ws = Workspace()
+    a, b = ws.create_branch("A", "create-a"), ws.create_branch("B", "create-b")
+    a.set("config", {"region": "eu"})
+    b.set("config", {"replicas": 3})
+
+    ws.commit("A", a)
+    ws.commit("B", b)
+
+    assert ws.head.data["config"] == {"region": "eu", "replicas": 3}
+
+
+def test_nested_array_is_atomic_and_conflicting_edits_are_not_guessed():
+    ws = seeded(config={"steps": ["build", "test"]})
+    a, b = ws.create_branch("A", "array-a"), ws.create_branch("B", "array-b")
+    a.set("config", {"steps": ["build", "test", "deploy"]})
+    b.set("config", {"steps": ["build", "lint", "test"]})
+
+    ws.commit("A", a)
+    with pytest.raises(ConflictError) as exc:
+        ws.commit("B", b)
+
+    assert exc.value.conflicting_keys == ["json-pointer:/config/steps"]
+    assert ws.head.data["config"]["steps"] == ["build", "test", "deploy"]
+
+
+def test_nested_delete_vs_modify_conflicts():
+    ws = seeded(config={"feature": {"enabled": True, "owner": "A"}})
+    a, b = ws.create_branch("A", "delete-parent"), ws.create_branch("B", "edit-child")
+    a.set("config", {})
+    b.set("config", {"feature": {"enabled": False, "owner": "A"}})
+
+    ws.commit("A", a)
+    with pytest.raises(ConflictError) as exc:
+        ws.commit("B", b)
+
+    assert exc.value.conflicting_keys == ["json-pointer:/config/feature"]
+    assert ws.head.data["config"] == {}
