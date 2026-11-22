@@ -1,16 +1,17 @@
 import { useState } from "react";
 import {
   ArrowRight, ArrowUpRight, Check, CircleDot, Clock3, GitBranch,
-  GitCommitHorizontal, GitMerge, Github, Layers3, LockKeyhole,
+  GitCommitHorizontal, GitMerge, Github, LockKeyhole, Mail,
   Radio, ShieldCheck, Workflow, Zap,
 } from "lucide-react";
+import cohortLogo from "./cohortLogo";
 import "./landing.css";
 
 const steps = [
-  { agent: "Agent A", task: "Claim shared task", detail: "lease acquired · token 41", tone: "violet" },
-  { agent: "Agent B", task: "Read current state", detail: "revision 12 · snapshot pinned", tone: "blue" },
-  { agent: "Agent B", task: "Take over expired lease", detail: "lease renewed · token 42", tone: "mint" },
-  { agent: "Agent A", task: "Attempt stale write", detail: "rejected · fencing token 41", tone: "rose" },
+  { task: "Claim shared task", detail: "lease acquired · token 41" },
+  { task: "Read current state", detail: "revision 12 · snapshot pinned" },
+  { task: "Take over expired lease", detail: "lease renewed · token 42" },
+  { task: "Attempt stale write", detail: "rejected · fencing token 41" },
 ];
 
 const capabilities = [
@@ -20,7 +21,13 @@ const capabilities = [
   { icon: Radio, number: "04", title: "Observable execution", copy: "Export coordination events and traces to the monitoring stack your team already uses." },
 ];
 
-const integrations = ["OpenTelemetry", "Splunk", "Datadog", "Microsoft Sentinel", "Elasticsearch", "MCP"];
+const frameworks = [
+  { name: "LangGraph", note: "Graph-based agent workflows", logo: "https://cdn.simpleicons.org/langchain/1C3C3C", href: "https://www.langchain.com/langgraph" },
+  { name: "CrewAI", note: "Role-based agent teams", logo: "https://cdn.simpleicons.org/crewai/FF5A5F", href: "https://www.crewai.com/" },
+  { name: "AutoGen", note: "Microsoft agent framework · legacy", logo: "https://cdn.simpleicons.org/microsoft/5E5E5E", href: "https://github.com/microsoft/autogen" },
+];
+
+const destinations = ["OpenTelemetry · OTLP/HTTP", "Splunk · HEC", "Datadog", "Microsoft Sentinel", "Elasticsearch", "MCP"];
 
 export default function LandingPage() {
   const [activeStep, setActiveStep] = useState(-1);
@@ -43,13 +50,14 @@ export default function LandingPage() {
       <header className="cs-nav">
         <div className="cs-nav-inner">
           <a className="cs-brand" href="#top" aria-label="Cohort home">
-            <span className="cs-brand-mark"><Layers3 size={19} strokeWidth={2.5} /></span>
+            <img className="cs-brand-logo" src={cohortLogo} alt="" />
             <span>cohort</span><span className="cs-by">by Cerbère</span>
           </a>
           <nav className="cs-links" aria-label="Main navigation">
             <a href="#how">How it works</a>
             <a href="#capabilities">Capabilities</a>
-            <a href="#integrations">Integrations</a>
+            <a href="#frameworks">Frameworks</a>
+            <a href="#pricing">Pricing</a>
           </nav>
           <div className="cs-nav-actions">
             <a className="cs-login" href="/app">Sign in</a>
@@ -73,10 +81,11 @@ export default function LandingPage() {
           </div>
 
           <div className="cs-demo-shell" id="how">
+            <div className="cs-preview-badge"><span /> INTERACTIVE PREVIEW · NOT THE LIVE DASHBOARD</div>
             <div className="cs-window-bar">
               <div className="cs-window-dots"><i /><i /><i /></div>
               <span className="cs-window-title">cohort / coordination trace</span>
-              <span className="cs-window-status"><span /> {running ? "SIMULATING" : activeStep === 3 ? "STALE WRITE BLOCKED" : "SYSTEM READY"}</span>
+              <span className="cs-window-status" role="status" aria-live="polite"><span /> {running ? "SIMULATING" : activeStep === 3 ? "STALE WRITE BLOCKED" : "READY TO SIMULATE"}</span>
             </div>
             <div className="cs-demo-top">
               <div><span className="cs-mono-label">SCENARIO 001</span><h2>A worker wakes up late.</h2><p>See what happens when a lease expires and another agent takes over.</p></div>
@@ -155,18 +164,47 @@ export default function LandingPage() {
           <p>COHORT'S CORE PROMISE</p>
         </section>
 
-        <section className="cs-section cs-integrations" id="integrations">
-          <div className="cs-integration-copy">
-            <span className="cs-section-kicker">FITS YOUR STACK</span>
-            <h2>Keep your tools.<br /><em>Connect the signals.</em></h2>
-            <p>Send coordination events to the observability and security systems your team already operates.</p>
-            <a className="cs-text-link" href="https://github.com/chrismsmr-celcom/cerbere-cohort">Explore the project <ArrowUpRight size={15} /></a>
+        <section className="cs-section cs-frameworks" id="frameworks">
+          <div className="cs-section-heading">
+            <span className="cs-section-kicker">BUILT TO FIT YOUR AGENT STACK</span>
+            <h2>Keep your framework.<br /><em>Add coordination.</em></h2>
+            <p>Cohort is a coordination layer, not another agent framework. Connect your agents through the Python SDK, REST API, or MCP instead of replacing the orchestration stack you already use.</p>
           </div>
-          <div className="cs-integration-board">
-            <div className="cs-board-core"><Layers3 size={25} /><strong>Cohort</strong><small>coordination events</small></div>
-            <div className="cs-board-lines" aria-hidden="true"><i /><i /><i /><i /><i /><i /></div>
-            <div className="cs-integration-list">{integrations.map((name, i) => <div className="cs-integration-item" key={name}><span className={`cs-integration-icon i${i}`}>{i === 0 ? "OT" : i === 1 ? "S" : i === 2 ? "D" : i === 3 ? "M" : i === 4 ? "E" : "M"}</span><strong>{name}</strong><ArrowUpRight size={13} /></div>)}</div>
+          <div className="cs-framework-grid">
+            {frameworks.map((framework) => (
+              <a className="cs-framework-card" href={framework.href} target="_blank" rel="noreferrer" key={framework.name}>
+                <div className="cs-framework-logo"><img src={framework.logo} alt="" loading="lazy" /></div>
+                <div><strong>{framework.name}</strong><span>{framework.note}</span></div>
+                <ArrowUpRight size={16} />
+              </a>
+            ))}
           </div>
+          <p className="cs-framework-footnote">Framework logos are trademarks of their respective owners. Connections are made through Cohort's public interfaces; these are not vendor-certified integrations.</p>
+          <div className="cs-destinations">
+            <span>OBSERVABILITY DESTINATIONS</span>
+            {destinations.map((destination) => <i key={destination}>{destination}</i>)}
+          </div>
+        </section>
+
+        <section className="cs-pricing" id="pricing">
+          <div className="cs-pricing-inner">
+            <div>
+              <span className="cs-section-kicker">CURRENT ACCESS</span>
+              <h2>Free while we're<br /><em>building the beta.</em></h2>
+              <p>The current Cohort version is free to use. Paid plans and subscription checkout are not available yet.</p>
+            </div>
+            <div className="cs-price-card">
+              <span className="cs-price-label">PUBLIC BETA</span>
+              <div className="cs-price">$0 <small>/ currently</small></div>
+              <ul><li><Check size={15} /> Access to the current version</li><li><Check size={15} /> Open-source core under MIT</li><li><Check size={15} /> No subscription or checkout</li></ul>
+              <a className="cs-button" href="/app">Try Cohort <ArrowRight size={16} /></a>
+            </div>
+          </div>
+        </section>
+
+        <section className="cs-blog" id="blog">
+          <div><span className="cs-section-kicker">FROM THE BUILD LOG</span><h2>Notes from the coordination layer.</h2><p>Engineering articles and product updates are being prepared.</p></div>
+          <a className="cs-text-link" href="https://github.com/chrismsmr-celcom/cerbere-cohort/commits/main/" target="_blank" rel="noreferrer">Follow repository updates <ArrowUpRight size={15} /></a>
         </section>
 
         <section className="cs-final-cta">
@@ -180,10 +218,21 @@ export default function LandingPage() {
       </main>
 
       <footer className="cs-footer">
-        <a className="cs-brand" href="#top"><span className="cs-brand-mark"><Layers3 size={19} /></span><span>cohort</span></a>
-        <span>Coordination infrastructure for AI agents.</span>
-        <div><a href="https://github.com/chrismsmr-celcom/cerbere-cohort">GitHub <ArrowUpRight size={13} /></a><a href="/app">Sign in <ArrowUpRight size={13} /></a></div>
-        <small>© {new Date().getFullYear()} Cerbère. All rights reserved.</small>
+        <div className="cs-footer-top">
+          <a className="cs-footer-wordmark" href="#top" aria-label="Back to Cohort home">
+            <img src={cohortLogo} alt="" />
+            <span>cohort</span>
+            <ArrowUpRight className="cs-footer-mark-arrow" size={26} />
+          </a>
+          <p>Coordination infrastructure for AI agents.<br />Independent agents. Shared rules. Reliable work.</p>
+        </div>
+        <div className="cs-footer-columns">
+          <div><strong>Product</strong><a href="#capabilities">Capabilities</a><a href="#frameworks">Frameworks</a><a href="#pricing">Pricing</a><a href="/app">Dashboard</a></div>
+          <div><strong>Resources</strong><a href="https://github.com/chrismsmr-celcom/cerbere-cohort" target="_blank" rel="noreferrer">GitHub</a><a href="https://github.com/chrismsmr-celcom/cerbere-cohort/blob/main/CONTRIBUTING.md" target="_blank" rel="noreferrer">Contributing</a><a href="#blog">Blog & updates</a><a href="https://www.cerbereag.site" target="_blank" rel="noreferrer">Cerbere AG</a></div>
+          <div><strong>Legal</strong><a href="https://github.com/chrismsmr-celcom/cerbere-cohort/blob/main/docs/TERMS.md" target="_blank" rel="noreferrer">Terms of use <span className="cs-draft-tag">DRAFT</span></a><a href="https://github.com/chrismsmr-celcom/cerbere-cohort/blob/main/docs/PRIVACY.md" target="_blank" rel="noreferrer">Privacy policy <span className="cs-draft-tag">DRAFT</span></a><a href="https://github.com/chrismsmr-celcom/cerbere-cohort/blob/main/LICENSE" target="_blank" rel="noreferrer">MIT license</a></div>
+          <div><strong>Contact</strong><a href="mailto:christopher-ag@cerbereag.site"><Mail size={14} /> christopher-ag@cerbereag.site</a><a href="https://github.com/chrismsmr-celcom/cerbere-cohort" target="_blank" rel="noreferrer"><Github size={14} /> Open-source project</a></div>
+        </div>
+        <div className="cs-footer-bottom"><span>© {new Date().getFullYear()} Cohort by Cerbère.</span><span>Built for teams of agents that need to work together.</span><a href="#top">Back to top ↑</a></div>
       </footer>
     </div>
   );
