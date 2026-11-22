@@ -329,6 +329,97 @@ def list_user_workspaces(authorization: str | None = Header(default=None)):
     ]}
 
 
+
+class WorkspaceProfileUpdate(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    legal_name: str | None = Field(default=None, max_length=160)
+    description: str | None = Field(default=None, max_length=500)
+    website: str | None = Field(default=None, max_length=240)
+    industry: str | None = Field(default=None, max_length=80)
+    country: str | None = Field(default=None, max_length=80)
+    contact_email: str | None = Field(default=None, max_length=254)
+    logo_url: str | None = Field(default=None, max_length=600)
+    brand_color: str | None = Field(default=None, pattern=r"^#[0-9A-Fa-f]{6}$")
+
+    @field_validator("name", "legal_name", "description", "website", "industry", "country", "contact_email", "logo_url")
+    @classmethod
+    def _trim_profile_text(cls, value: str | None) -> str | None:
+        return value.strip() or None if value is not None else None
+
+    @field_validator("website")
+    @classmethod
+    def _validate_website(cls, value: str | None) -> str | None:
+        if value and not re.match(r"^https?://[^\\s/]+(?:/[^\\s]*)?$", value, re.IGNORECASE):
+            raise ValueError("Website must be a valid HTTP or HTTPS URL")
+        return value
+
+    @field_validator("contact_email")
+    @classmethod
+    def _validate_contact_email(cls, value: str | None) -> str | None:
+        if value and not re.match(r"^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$", value):
+            raise ValueError("Enter a valid contact email")
+        return value
+
+
+@app.get("/api/workspace/profile")
+def get_workspace_profile(context: dict[str, Any] = Depends(require_workspace_member)):
+    organization_id = context["organization_id"]
+    if not DATABASE_URL:
+        return {"profile": {"id": organization_id, "name": "Local workspace"}}
+    row = _membership_connection.execute(
+        """SELECT id, name, legal_name, description, website, industry, country,
+                  contact_email, logo_url, brand_color, account_type
+           FROM public.cohort_organizations WHERE id = ?""",
+        (organization_id,),
+    ).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Workspace not found")
+    return {"profile": {key: (str(row[key]) if key == "id" else row[key]) for key in
+        ("id", "name", "legal_name", "description", "website", "industry", "country",
+         "contact_email", "logo_url", "brand_color", "account_type")}}
+
+
+@app.patch("/api/workspace/profile")
+def update_workspace_profile(
+    body: WorkspaceProfileUpdate,
+    context: dict[str, Any] = Depends(require_workspace_member),
+):
+    if not DATABASE_URL:
+        raise HTTPException(status_code=503, detail="Organization profiles require PostgreSQL")
+    if context.get("role") not in {"owner", "admin"}:
+        raise HTTPException(status_code=403, detail="Only workspace owners and admins can update the organization profile")
+    organization_id = context["organization_id"]
+    expected_logo_prefix = f"{os.getenv('SUPABASE_URL', '').rstrip('/')}/storage/v1/object/public/cohort-organization-logos/{organization_id}/"
+    if body.logo_url and (not expected_logo_prefix.startswith("https://") or not body.logo_url.startswith(expected_logo_prefix)):
+        raise HTTPException(status_code=422, detail="Logo must be uploaded to this workspace's organization logo storage")
+    try:
+        _membership_connection.execute(
+            """UPDATE public.cohort_organizations
+               SET name = ?, legal_name = ?, description = ?, website = ?, industry = ?,
+                   country = ?, contact_email = ?, logo_url = ?, brand_color = ?,
+                   updated_at = now()
+               WHERE id = ?""",
+            (body.name, body.legal_name, body.description, body.website, body.industry,
+             body.country, body.contact_email, body.logo_url, body.brand_color, organization_id),
+        )
+        _membership_connection.execute(
+            """INSERT INTO public.cohort_audit_logs
+               (organization_id, actor_user_id, action, target_type, target_id, metadata)
+               VALUES (?, ?, 'workspace.profile_updated', 'workspace', ?,
+                       jsonb_build_object('fields', ?::jsonb))""",
+            (organization_id, context["user_id"], organization_id,
+             json.dumps([key for key, value in body.model_dump().items() if value is not None])),
+        )
+        _membership_connection.commit()
+    except Exception as exc:
+        _membership_connection.rollback()
+        logger.exception("Workspace profile update failed")
+        raise HTTPException(status_code=503, detail="Unable to update workspace profile") from exc
+    return {"updated": True, "profile": {
+        "id": organization_id, **body.model_dump()
+    }}
+
+
 def _telemetry_collector_enabled() -> bool:
     return os.getenv("COHORT_TELEMETRY_COLLECTOR_ENABLED", "false").lower() in {"1", "true", "yes", "on"}
 
