@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import type { FormEvent } from "react";
 import { API_BASE, api } from "../lib/api";
 import { getActiveWorkspaceId } from "../auth";
 import { Card, Disconnected, PageHead, Seg, Tag } from "../components/ui";
@@ -41,7 +42,7 @@ export default function Settings({ ctx, dark, setDark, mode, setMode }: { ctx: C
   };
   useEffect(() => { void loadExport(); }, []);
 
-  const saveExport = async (event: React.FormEvent) => {
+  const saveExport = async (event: FormEvent) => {
     event.preventDefault();
     setExportBusy(true); setExportMessage(""); setExportError("");
     try {
@@ -112,7 +113,7 @@ export default function Settings({ ctx, dark, setDark, mode, setMode }: { ctx: C
             </div>
             {exportConfig?.configured && exportConfig.enabled
               ? <Tag tone="ok">Enabled</Tag>
-              : <Tag tone="muted">Not configured</Tag>}
+              : <Tag tone="warn">Not configured</Tag>}
           </div>
           <form className="stack" onSubmit={saveExport}>
             <label className="field">OTLP logs endpoint
