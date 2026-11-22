@@ -11,7 +11,7 @@
   --cs-blue: #a9caff;
   --cs-pink: #ffc1dc;
   min-height: 100vh;
-  overflow: hidden;
+  overflow-x: clip;\n  overflow-y: visible;
   background: var(--cs-bg);
   color: var(--cs-ink);
   font-family: "Manrope Variable", Manrope, system-ui, sans-serif;
@@ -267,3 +267,50 @@
 .cs-connection-methods > span { width: 100%; margin-bottom: 2px; color: #7058a4; font: 800 9px "Roboto",monospace; letter-spacing: .1em; }
 .cs-connection-methods strong { font-size: 11px; font-weight: 850; }
 .cs-connection-methods i { width: 4px; height: 4px; border-radius: 50%; background: #9a8eaa; }
+
+/* Footer wordmark is typography, not a second logo. */
+.cs-footer { overflow: visible; }
+.cs-footer-top { align-items: center; padding-top: 54px; padding-bottom: 48px; }
+.cs-footer-brand { display: inline-flex; align-items: center; gap: 12px; font-size: 32px; font-weight: 900; letter-spacing: -.075em; }
+.cs-footer-brand img { width: 36px; height: 36px; object-fit: contain; }
+.cs-footer-columns { grid-template-columns: repeat(4,minmax(0,1fr)); column-gap: clamp(28px,6vw,90px); row-gap: 42px; padding-top: 45px; padding-bottom: 54px; }
+.cs-footer-columns > div { gap: 16px; min-width: 0; }
+.cs-footer-columns strong { margin-bottom: 8px; }
+.cs-footer-columns a { line-height: 1.65; overflow-wrap: anywhere; }
+.cs-footer-bottom { padding-top: 22px; padding-bottom: 24px; }
+.cs-footer-monument { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: clamp(170px,26vw,330px); padding: 8px 14px 24px; overflow: hidden; border-top: 1px solid rgba(255,255,255,.14); color: #f4efff; }
+.cs-footer-monument > span { display: block; font-size: clamp(100px,25vw,340px); font-weight: 950; line-height: .78; letter-spacing: -.105em; transform-origin: center; will-change: transform,letter-spacing; transition: letter-spacing .25s ease, transform .25s ease; }
+.cs-footer-monument > small { margin-top: 23px; color: #b9aecb; font: 800 9px "Roboto",monospace; letter-spacing: .18em; opacity: .8; transition: color .2s,letter-spacing .2s; }
+.cs-footer-monument:hover > span,.cs-footer-monument:focus-visible > span { transform: scale(.96) skewX(-3deg); letter-spacing: -.07em; }
+.cs-footer-monument:hover > small { color: var(--cs-yellow); letter-spacing: .25em; }
+@supports (animation-timeline: view()) {
+  .cs-footer-monument > span { animation: cohort-wordmark-scroll linear both; animation-timeline: view(); animation-range: entry 0% exit 100%; }
+  @keyframes cohort-wordmark-scroll {
+    from { transform: translateY(22%) scale(.88); letter-spacing: -.13em; opacity: .35; }
+    to { transform: translateY(-5%) scale(1); letter-spacing: -.085em; opacity: 1; }
+  }
+}
+.cs-frameworks-secondary { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin-top: 24px; }
+.cs-frameworks-secondary > span { color: #7058a4; font: 800 9px "Roboto",monospace; letter-spacing: .1em; }
+.cs-frameworks-secondary a { display: inline-flex; align-items: center; gap: 4px; padding: 6px 10px; border: 1px solid var(--cs-line); border-radius: 7px; background: rgba(255,255,255,.65); font-size: 10px; font-weight: 800; }
+.cs-frameworks-secondary a:hover { background: white; }
+.cs-frameworks-secondary small { color: var(--cs-muted); font-size: 9px; font-weight: 600; }
+@media (max-width: 900px) {
+  .cs-footer-columns { column-gap: 35px; row-gap: 38px; }
+}
+@media (max-width: 680px) {
+  .cs-footer-top { display: flex; flex-direction: column; align-items: flex-start; gap: 17px; padding-top: 38px; padding-bottom: 32px; }
+  .cs-footer-brand { font-size: 28px; }
+  .cs-footer-top > p { margin-top: 0; text-align: left; }
+  .cs-footer-columns { grid-template-columns: repeat(2,minmax(0,1fr)); column-gap: 24px; row-gap: 38px; padding-top: 34px; padding-bottom: 38px; }
+  .cs-footer-columns > div { gap: 14px; }
+  .cs-footer-columns a { font-size: 11px; }
+  .cs-footer-bottom { gap: 12px 20px; line-height: 1.6; }
+  .cs-footer-monument { min-height: 150px; padding-bottom: 20px; }
+  .cs-footer-monument > span { font-size: 26vw; }
+  .cs-footer-monument > small { margin-top: 18px; font-size: 7px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cs-footer-monument > span { animation: none !important; transition: none !important; }
+  .cs-footer-monument > small { transition: none !important; }
+}
