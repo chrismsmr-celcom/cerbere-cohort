@@ -408,7 +408,7 @@ def update_workspace_profile(
                VALUES (?, ?, 'workspace.profile_updated', 'workspace', ?,
                        jsonb_build_object('fields', ?::jsonb))""",
             (organization_id, context["user_id"], organization_id,
-             json.dumps([key for key, value in body.model_dump().items() if value is not None])),
+             json.dumps(list(body.model_dump().keys()))),
         )
         _membership_connection.commit()
     except Exception as exc:
