@@ -41,6 +41,8 @@ def test_otlp_payload_excludes_workspace_values_and_secrets():
     assert "private@example.com" not in encoded
     assert "do not export this" not in encoded
     assert "secret" not in encoded
+    assert "customer_record" not in encoded
+    assert "resource_key" not in encoded
 
 
 def test_headers_are_authenticated_encrypted_and_round_trip(monkeypatch):
@@ -92,3 +94,9 @@ def test_send_rejects_private_ip_destinations():
         observability.send_otlp_logs(
             "https://127.0.0.1/v1/logs", {}, []
         )
+
+def test_headers_cannot_override_transport_headers():
+    with pytest.raises(ValueError, match="cannot be overridden"):
+        observability.validate_headers({"Host": "attacker.example"})
+    with pytest.raises(ValueError, match="cannot be overridden"):
+        observability.validate_headers({"Authorization": "Bearer a", "authorization": "Bearer b"})
