@@ -23,6 +23,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator, model_validator
 from cerbere_cohort.workspace import Branch, Workspace, _MISSING
+from cerbere_cohort.events import event_actor
 from cerbere_cohort.telemetry import send_installation_ping
 from cerbere_cohort.auth import (
     configure_membership_db,
@@ -414,7 +415,6 @@ def _require_agent_identity(context: dict[str, Any], requested_agent_id: str) ->
     if context.get("principal_type") == "agent" and context.get("agent_id") != requested_agent_id:
         raise HTTPException(status_code=403, detail="Agent credentials cannot act as another agent")
 
-
 def _branch_summary(branch_id: str, item: dict[str, Any]) -> dict[str, Any]:
     branch = item["branch"]
     return {
@@ -563,7 +563,9 @@ def create_branch(body: BranchCreate, context: dict[str, Any] = Depends(require_
     _require_agent_identity(context, body.agent_id)
     branch_id = str(uuid.uuid4())
     try:
-        branch = workspace.create_branch(body.agent_id, body.name)
+        with _lock:
+            with event_actor(context):
+                branch = workspace.create_branch(body.agent_id, body.name)
     except Exception as exc:
         raise HTTPException(400, str(exc)) from exc
     with _lock:
@@ -606,10 +608,11 @@ def commit_branch(
         if not item or item["status"] != "open" or not _agent_owns(context, item["agent_id"]):
             raise HTTPException(404, "Open branch not found")
         try:
-            snapshot = workspace.commit(
-                item["agent_id"], item["branch"],
-                expected_head_version=body.expected_head_version if body else None,
-            )
+            with event_actor(context):
+                snapshot = workspace.commit(
+                    item["agent_id"], item["branch"],
+                    expected_head_version=body.expected_head_version if body else None,
+                )
             item["status"] = "merged"
             item["conflicting_keys"] = []
             _save_api_branch(branch_id, item)
@@ -698,7 +701,8 @@ def resolve_branch(branch_id: str, body: ResolveRequest, context: dict[str, Any]
                     rationale=body.rationale,
                 )
         try:
-            snapshot = workspace.commit(item["agent_id"], item["branch"], resolver=AuditedResolver())
+            with event_actor(context):
+                snapshot = workspace.commit(item["agent_id"], item["branch"], resolver=AuditedResolver())
             item["status"] = "merged"
             item["conflicting_keys"] = []
             _save_api_branch(branch_id, item)
@@ -757,7 +761,9 @@ def get_leases(context: dict[str, Any] = Depends(require_lease_read_access)):
 def acquire_lease(body: LeaseRequest, context: dict[str, Any] = Depends(require_lease_write_access)):
     _require_agent_identity(context, body.agent_id)
     try:
-        lease = workspace.acquire_lease(body.agent_id, body.key, body.duration_seconds)
+        with _lock:
+            with event_actor(context):
+                lease = workspace.acquire_lease(body.agent_id, body.key, body.duration_seconds)
     except LeaseError as exc:
         raise HTTPException(409, detail={"message": str(exc), "code": exc.code, "details": exc.details}) from exc
     return {
@@ -773,7 +779,9 @@ def acquire_lease(body: LeaseRequest, context: dict[str, Any] = Depends(require_
 def release_lease(key: str, agent_id: str, context: dict[str, Any] = Depends(require_lease_write_access)):
     _require_agent_identity(context, agent_id)
     try:
-        workspace.release_lease(agent_id, key)
+        with _lock:
+            with event_actor(context):
+                workspace.release_lease(agent_id, key)
     except LeaseError as exc:
         raise HTTPException(409, detail={"message": str(exc), "code": exc.code}) from exc
     return {"ok": True}
