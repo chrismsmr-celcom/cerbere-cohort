@@ -51,6 +51,7 @@ a{color:inherit;text-decoration:none}
 .brand strong{font:700 18px var(--ui);color:var(--ink);letter-spacing:-.3px}
 .tag-beta{font:500 10px var(--data);padding:0 6px;border-radius:4px;background:var(--accent-soft);color:var(--accent);margin-left:var(--s1)}
 .ws-pick{display:flex;align-items:center;gap:var(--s2);padding:var(--s2);border:1px solid var(--line);border-radius:var(--r-ctl);margin-bottom:var(--s2);min-height:48px}
+.ws-pick .av img{width:100%;height:100%;object-fit:cover;border-radius:inherit}
 .ws-pick .av{width:32px;height:32px;border-radius:var(--r-ctl);background:var(--accent-soft);color:var(--accent);display:grid;place-items:center;font-weight:700;flex:none}
 .ws-pick strong{display:block;font-weight:600;color:var(--ink);line-height:1.2}.ws-pick small{color:var(--muted);font-size:12px}
 .nav-scroll{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;display:flex;flex-direction:column;gap:var(--s1)}
@@ -323,4 +324,50 @@ tr:hover .cell-actions,tr:focus-within .cell-actions{opacity:1}
 }
 @media(prefers-reduced-motion:reduce){
   .auth-provider{transition:none}
+}
+
+
+/* Organization identity and dashboard visual language */
+.ws-profile-trigger{display:flex;align-items:center;gap:var(--s2);width:100%;min-width:0;text-align:left}
+.ws-profile-copy{min-width:0;flex:1}
+.ws-profile-copy strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ws-profile-edit{flex:none;color:var(--muted);opacity:.65;transition:opacity 120ms,color 120ms}
+.ws-profile-trigger:hover .ws-profile-edit{opacity:1;color:var(--accent)}
+.org-profile-modal{max-width:680px}
+.org-profile-heading{display:flex;align-items:center;gap:12px}
+.org-profile-icon{width:36px;height:36px;display:grid;place-items:center;border:1px solid #d9cff0;border-radius:10px;background:#f1ecff;color:#7058a4}
+.org-profile-modal form{display:flex;flex:1;min-height:0;flex-direction:column}
+.org-profile-body{gap:20px}
+.org-profile-logo-row{display:flex;align-items:center;gap:16px;padding:4px 0 18px;border-bottom:1px solid var(--line)}
+.org-profile-logo{width:72px;height:72px;flex:none;display:grid;place-items:center;overflow:hidden;border:1px solid var(--line);border-radius:14px;background:#f1ecff;color:#7058a4;font-size:26px;font-weight:800}
+.org-profile-logo img{width:100%;height:100%;object-fit:contain;background:#fff}
+.org-profile-logo-actions{display:flex;flex-direction:column;gap:5px}
+.org-profile-logo-actions strong{font-size:13px;color:var(--ink)}
+.org-profile-logo-actions small{font-size:12px;color:var(--muted)}
+.org-profile-actions{display:flex;align-items:center;gap:8px;margin-top:5px}
+.org-upload-label{position:relative;cursor:pointer}
+.org-upload-label input{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap}
+.org-btn-sm{height:28px;padding:0 10px;font-size:12px}
+.org-profile-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.org-profile-full{grid-column:1/-1}
+.org-profile-color{grid-column:1/-1;max-width:260px}
+.org-color-control{display:flex;align-items:center;gap:8px}
+.org-color-control input[type=color]{width:42px;height:36px;padding:3px;flex:none;cursor:pointer}
+.org-color-control input[aria-label]{flex:1;min-width:0}
+.org-profile-readonly{padding:10px 12px;border:1px solid var(--line);border-radius:var(--r-ctl);background:var(--bg);color:var(--muted);font-size:12px}
+.org-profile-loading{display:flex;align-items:center;justify-content:center;gap:10px;min-height:180px;color:var(--muted);font-size:13px}
+.org-profile-modal .modal-f{flex:none}
+.org-profile-modal input:disabled,.org-profile-modal textarea:disabled{opacity:.72;cursor:not-allowed}
+.spin{animation:orgSpin 1s linear infinite}
+@keyframes orgSpin{to{transform:rotate(360deg)}}
+/* A restrained version of the landing page's dotted lavender paper. */
+.app{background-color:var(--bg);background-image:radial-gradient(rgba(112,88,164,.075) .8px,transparent .8px);background-size:20px 20px}
+.side{background:linear-gradient(180deg,rgba(241,236,255,.72),var(--card) 34%)}
+:root[data-theme="dark"] .app{background-image:radial-gradient(rgba(170,145,225,.09) .8px,transparent .8px)}
+:root[data-theme="dark"] .side{background:var(--card)}
+@media(max-width:600px){
+  .org-profile-fields{grid-template-columns:1fr}
+  .org-profile-full,.org-profile-color{grid-column:auto}
+  .org-profile-modal{max-height:calc(100vh - 20px)}
+  .org-profile-logo-row{align-items:flex-start}
 }

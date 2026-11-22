@@ -16,7 +16,7 @@ export const supabase = supabaseUrl && supabaseAnonKey
 
 const ACTIVE_WORKSPACE_KEY = "cohort.active-workspace";
 
-export type CohortWorkspace = { id: string; name: string; role: string; account_type?: string; onboarding_completed?: boolean };
+export type CohortWorkspace = { id: string; name: string; role: string; account_type?: string; onboarding_completed?: boolean; logo_url?: string | null };
 export function getActiveWorkspaceId(): string {
   try { return localStorage.getItem(ACTIVE_WORKSPACE_KEY) || ""; } catch { return ""; }
 }

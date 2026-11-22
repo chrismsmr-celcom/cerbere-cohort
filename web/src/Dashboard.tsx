@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { ToastProvider, useToast } from "./components/ui";
 import Sidebar from "./components/Sidebar";
+import OrganizationProfileModal from "./components/OrganizationProfileModal";
 import type { SidebarMode } from "./components/Sidebar";
 import Topbar from "./components/Topbar";
 import CommandPalette from "./components/CommandPalette";
@@ -27,14 +28,14 @@ const stored = <T extends string>(key: string, allowed: T[], fallback: T): T => 
 
 type Modalish = { kind: "create" } | { kind: "resolve"; branch: Branch } | { kind: "write"; branch: Branch } | { kind: "diff"; branch: Branch } | { kind: "plans" } | { kind: "cerbere" } | { kind: "palette" } | { kind: "inspector"; index: number } | null;
 
-function Shell({ userEmail, onSignOut, workspaces, activeWorkspace, onWorkspaceChange }: { userEmail?: string; onSignOut?: () => void; workspaces?: CohortWorkspace[]; activeWorkspace?: CohortWorkspace; onWorkspaceChange?: (id: string) => void }) {
+function Shell({ userEmail, onSignOut, workspaces, activeWorkspace, onWorkspaceChange, onWorkspaceProfileChange }: { userEmail?: string; onSignOut?: () => void; workspaces?: CohortWorkspace[]; activeWorkspace?: CohortWorkspace; onWorkspaceChange?: (id: string) => void; onWorkspaceProfileChange?: (profile: { id: string; name: string; logo_url?: string | null }) => void }) {
   const toast = useToast();
   const { data, refresh } = useCohort();
   const cerbere = useOptional<CerbereSummary>("/cerbere/summary?window=24h", 60000);
   const [tab, setTabState] = useState<Tab>(readTab); const [query, setQuery] = useState("");
   const [dark, setDark] = useState(() => { try { return localStorage.getItem("cohort-theme") === "dark"; } catch { return false; } });
   const [mode, setMode] = useState<SidebarMode>(() => stored<SidebarMode>("cohort-sidebar", ["expanded", "hover", "collapsed"], "expanded"));
-  const [mobileOpen, setMobileOpen] = useState(false); const [modal, setModal] = useState<Modalish>(null); const [busy, setBusy] = useState(false);
+  const [mobileOpen, setMobileOpen] = useState(false); const [modal, setModal] = useState<Modalish>(null); const [busy, setBusy] = useState(false); const [organizationProfileOpen, setOrganizationProfileOpen] = useState(false);
 
   useEffect(() => { document.documentElement.dataset.theme = dark ? "dark" : "light"; try { localStorage.setItem("cohort-theme", dark ? "dark" : "light"); } catch { /* storage unavailable */ } }, [dark]);
   useEffect(() => { try { localStorage.setItem("cohort-sidebar", mode); } catch { /* storage unavailable */ } }, [mode]);
@@ -67,7 +68,7 @@ function Shell({ userEmail, onSignOut, workspaces, activeWorkspace, onWorkspaceC
     <div className="app-bg" aria-hidden /><div className="bg-noise" aria-hidden />
     <Sidebar tab={tab} onTab={(t) => go(t)} mode={mode} onMode={setMode} mobileOpen={mobileOpen} onCloseMobile={() => setMobileOpen(false)} dark={dark} onToggleDark={() => setDark(!dark)}
       openBranches={openBranches.length} conflicts={openBranches.filter((b) => b.conflicting_keys.length).length} blocked={cerbere.status === "ready" ? cerbere.data?.totals.blocked ?? null : null}
-      userEmail={userEmail} onSignOut={onSignOut} workspaces={workspaces} activeWorkspace={activeWorkspace} onWorkspaceChange={onWorkspaceChange} onCerbere={() => setModal({ kind: "cerbere" })} onPlans={() => setModal({ kind: "plans" })} />
+      userEmail={userEmail} onSignOut={onSignOut} workspaces={workspaces} activeWorkspace={activeWorkspace} onWorkspaceChange={onWorkspaceChange} onEditOrganization={() => setOrganizationProfileOpen(true)} onCerbere={() => setModal({ kind: "cerbere" })} onPlans={() => setModal({ kind: "plans" })} />
     <div className="main">
       <Topbar crumb={TABS[tab]} connected={data.connected} loaded={data.loaded} onSearch={() => setModal({ kind: "palette" })} onRefresh={() => void refresh()} onMenu={() => setMobileOpen(!mobileOpen)} />
       <main>
@@ -91,9 +92,10 @@ function Shell({ userEmail, onSignOut, workspaces, activeWorkspace, onWorkspaceC
     {modal?.kind === "cerbere" && <CerbereDrawer onClose={close} />}
     {modal?.kind === "palette" && <CommandPalette data={data} onClose={close} onNavigate={go} />}
     {modal?.kind === "inspector" && <EventInspector events={data.events} index={modal.index} setIndex={(i) => setModal({ kind: "inspector", index: i })} onClose={close} />}
+    {organizationProfileOpen && activeWorkspace && <OrganizationProfileModal workspace={activeWorkspace} onClose={() => setOrganizationProfileOpen(false)} onSaved={(profile) => onWorkspaceProfileChange?.({ id: profile.id, name: profile.name, logo_url: profile.logo_url })} />}
   </div>;
 }
 
-export default function Dashboard(props: { userEmail?: string; onSignOut?: () => void; workspaces?: CohortWorkspace[]; activeWorkspace?: CohortWorkspace; onWorkspaceChange?: (id: string) => void }) {
+export default function Dashboard(props: { userEmail?: string; onSignOut?: () => void; workspaces?: CohortWorkspace[]; activeWorkspace?: CohortWorkspace; onWorkspaceChange?: (id: string) => void; onWorkspaceProfileChange?: (profile: { id: string; name: string; logo_url?: string | null }) => void }) {
   return <ToastProvider><Shell {...props} /></ToastProvider>;
 }

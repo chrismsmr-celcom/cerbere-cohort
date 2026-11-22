@@ -126,6 +126,7 @@ export default function App() {
     workspaces={workspaces}
     activeWorkspace={activeWorkspace}
     onWorkspaceChange={(id) => { setWorkspaceId(id); setActiveWorkspaceId(id); }}
+    onWorkspaceProfileChange={({ id, name, logo_url }) => setWorkspaces((current) => current.map((workspace) => workspace.id === id ? { ...workspace, name, logo_url } : workspace))}
     onSignOut={() => { setActiveWorkspaceId(""); void supabase?.auth.signOut(); }}
   />;
 }
