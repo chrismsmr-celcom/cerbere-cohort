@@ -171,7 +171,10 @@ def test_readiness_checks_database_and_hosted_configuration(monkeypatch):
 
     class ReadyDatabase:
         def execute(self, sql):
-            assert sql == "SELECT 1"
+            assert sql in {
+                "SELECT 1",
+                "SELECT 1 FROM public.cohort_memberships LIMIT 0",
+            }
             return self
 
         def fetchone(self):
@@ -218,6 +221,7 @@ def test_readiness_fails_closed_when_supabase_or_database_is_unavailable(monkeyp
     assert exc.value.status_code == 503
     assert exc.value.detail["checks"] == {
         "database": False,
+        "membership_table": False,
         "supabase_url": False,
         "supabase_jwks": False,
         "cors_origins": True,
