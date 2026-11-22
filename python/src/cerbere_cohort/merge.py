@@ -13,6 +13,11 @@ from .errors import CerbereError
 _ABSENT = object()
 
 
+def _clone(value: Any) -> Any:
+    """Copy JSON values without cloning the identity-based absence sentinel."""
+    return _ABSENT if value is _ABSENT else deepcopy(value)
+
+
 class ConflictError(CerbereError):
     """Raised when concurrent changes diverge on the same JSON path."""
 
@@ -54,9 +59,9 @@ def _merge_node(
 ) -> Any:
     """Merge one JSON node, returning the merged value or _ABSENT."""
     if mine == base:
-        return deepcopy(head)
+        return _clone(head)
     if head == base or head == mine:
-        return deepcopy(mine)
+        return _clone(mine)
 
     # Recurse only through JSON objects. Arrays remain atomic because index
     # merges can silently reorder or combine semantically related elements.
