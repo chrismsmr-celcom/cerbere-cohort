@@ -1,24 +1,30 @@
-# python/src/cerbere_cohort/merge.py
+"""Three-way JSON merge with path-level conflict detection.
+
+Objects (JSON dictionaries) merge recursively. Arrays and scalar values are
+atomic: concurrent divergent edits to the same value conflict rather than
+being guessed or reordered.
+"""
+from copy import deepcopy
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from .errors import CerbereError
 
-_ABSENT = object()  # distingue "clé absente" de "valeur None"
+_ABSENT = object()
 
 
 class ConflictError(CerbereError):
-    """Levée lorsque des modifications concurrentes divergent sur les mêmes clés.
-
-    Codes stables selon le point de levée : conflict_detected,
-    conflict_unresolved, conflict_head_moved. Les clés en conflit restent
-    lisibles sur l'attribut `conflicting_keys` ET dans `details`.
-    """
+    """Raised when concurrent changes diverge on the same JSON path."""
 
     code = "conflict_detected"
 
-    def __init__(self, message: str = "", conflicting_keys: Optional[List[str]] = None,
-                 code: Optional[str] = None, **details: Any):
+    def __init__(
+        self,
+        message: str = "",
+        conflicting_keys: Optional[List[str]] = None,
+        code: Optional[str] = None,
+        **details: Any,
+    ):
         self.conflicting_keys: List[str] = list(conflicting_keys or [])
         details.setdefault("conflicting_keys", list(self.conflicting_keys))
         super().__init__(message, details=details, code=code)
@@ -31,38 +37,85 @@ class MergeResult:
     conflicting_keys: Optional[List[str]] = None
 
 
+def _conflict_path(tokens: Tuple[str, ...]) -> str:
+    """Keep legacy root-key names; encode nested paths as JSON Pointers."""
+    if len(tokens) == 1:
+        return tokens[0]
+    escaped = (part.replace("~", "~0").replace("/", "~1") for part in tokens)
+    return "json-pointer:/" + "/".join(escaped)
+
+
+def _merge_node(
+    base: Any,
+    mine: Any,
+    head: Any,
+    path: Tuple[str, ...],
+    conflicts: List[str],
+) -> Any:
+    """Merge one JSON node, returning the merged value or _ABSENT."""
+    if mine == base:
+        return deepcopy(head)
+    if head == base or head == mine:
+        return deepcopy(mine)
+
+    # Recurse only through JSON objects. Arrays remain atomic because index
+    # merges can silently reorder or combine semantically related elements.
+    base_is_object = base is _ABSENT or isinstance(base, dict)
+    if base_is_object and isinstance(mine, dict) and isinstance(head, dict):
+        base_obj = {} if base is _ABSENT else base
+        merged: Dict[str, Any] = {}
+        for key in sorted(set(base_obj) | set(mine) | set(head)):
+            value = _merge_node(
+                base_obj.get(key, _ABSENT),
+                mine.get(key, _ABSENT),
+                head.get(key, _ABSENT),
+                path + (key,),
+                conflicts,
+            )
+            if value is not _ABSENT:
+                merged[key] = value
+        return merged
+
+    conflicts.append(_conflict_path(path))
+    return deepcopy(head)
+
+
 def detect_and_merge(
     base_data: Dict[str, Any],
     branch_data: Dict[str, Any],
     current_head_data: Dict[str, Any],
 ) -> MergeResult:
-    """Fusion à trois voies, clé par clé (règle de CONCEPTS.md §4).
+    """Perform a recursive three-way merge of JSON objects.
 
-    Pour chaque clé, avec M = valeur dans la base ("absente" comprise) :
-      - la branche n'a pas changé la clé          -> on garde le HEAD
-      - le HEAD n'a pas changé la clé             -> on prend la branche
-      - branche et HEAD ont changé vers la même valeur -> pas de conflit
-      - sinon (y compris suppression vs modification)  -> CONFLIT
+    - unchanged branch values keep HEAD;
+    - unchanged HEAD values accept the branch;
+    - identical concurrent values are accepted;
+    - dictionaries merge recursively by key;
+    - arrays and scalars are atomic;
+    - delete-vs-modify and divergent edits produce a conflict.
+
+    Root-level conflict names remain unchanged for API compatibility.
+    Nested conflict names use `json-pointer:/root/nested/path` with RFC 6901
+    escaping for `~` and `/`.
     """
-    merged = dict(current_head_data)
+    merged: Dict[str, Any] = {}
     conflicts: List[str] = []
 
-    for key in set(base_data) | set(branch_data) | set(current_head_data):
-        base = base_data.get(key, _ABSENT)
-        mine = branch_data.get(key, _ABSENT)
-        head = current_head_data.get(key, _ABSENT)
-
-        if mine == base:
-            continue  # la branche n'a rien changé ici
-        if head == base or head == mine:
-            if mine is _ABSENT:
-                merged.pop(key, None)
-            else:
-                merged[key] = mine
-        else:
-            conflicts.append(key)
+    for key in sorted(set(base_data) | set(branch_data) | set(current_head_data)):
+        value = _merge_node(
+            base_data.get(key, _ABSENT),
+            branch_data.get(key, _ABSENT),
+            current_head_data.get(key, _ABSENT),
+            (key,),
+            conflicts,
+        )
+        if value is not _ABSENT:
+            merged[key] = value
 
     if conflicts:
-        # merged_data = fusion des clés SANS conflit ; les clés en conflit gardent la valeur du HEAD
-        return MergeResult(success=False, merged_data=merged, conflicting_keys=sorted(conflicts))
+        return MergeResult(
+            success=False,
+            merged_data=merged,
+            conflicting_keys=sorted(set(conflicts)),
+        )
     return MergeResult(success=True, merged_data=merged)
