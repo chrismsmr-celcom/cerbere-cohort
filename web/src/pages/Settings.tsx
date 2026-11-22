@@ -104,23 +104,23 @@ export default function Settings({ ctx, dark, setDark, mode, setMode }: { ctx: C
         <Line label="Authentication" value={s ? (s.authentication === "supabase" ? "Supabase JWT + membership checks" : "Not configured (development)") : "—"} />
         <div style={{ padding: "16px 24px 24px" }}><div className="notice warn"><div className="grow"><strong>Deployment note</strong>Workspace access is selected per signed-in user. Membership is checked by the API on each request.</div></div></div>
       </Card>
-      <Card className="c12" title="External observability" description="Forward Cohort coordination events to your OTLP/HTTP logs backend.">
+      <Card className="c12 observability-card" title="External observability" description="Forward Cohort coordination events to your OTLP/HTTP logs backend.">
         {exportLoading ? <div className="muted">Loading exporter configuration…</div> : <>
-          <div className="row between" style={{ marginBottom: 14 }}>
-            <div>
+          <div className="observability-heading">
+            <div className="observability-copy">
               <strong>OpenTelemetry Protocol (OTLP/HTTP)</strong>
-              <div className="muted">Datadog, Grafana, Honeycomb, New Relic, Splunk OTel Collector, Elastic and any OTLP-compatible endpoint.</div>
+              <div className="muted">Datadog, Grafana, Honeycomb, New Relic, Splunk OTel Collector, Elastic and other OTLP-compatible endpoints.</div>
             </div>
             {exportConfig?.configured && exportConfig.enabled
               ? <Tag tone="ok">Enabled</Tag>
               : <Tag tone="warn">Not configured</Tag>}
           </div>
-          <form className="stack" onSubmit={saveExport}>
+          <form className="stack observability-form" onSubmit={saveExport}>
             <label className="field">OTLP logs endpoint
               <input value={endpoint} onChange={(e) => setEndpoint(e.target.value)} placeholder="https://otlp.datadoghq.com/v1/logs" type="url" required />
               <small>For Datadog, use your region's OTLP endpoint. Cohort appends /v1/logs if omitted.</small>
             </label>
-            <div className="grid">
+            <div className="grid observability-auth-grid">
               <label className="field c4">Authentication header
                 <input value={headerName} onChange={(e) => setHeaderName(e.target.value)} placeholder="dd-api-key" />
               </label>
