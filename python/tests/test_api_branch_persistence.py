@@ -250,3 +250,49 @@ def test_conflict_api_reads_encoded_root_key_values_and_presence(tmp_path, monke
     assert conflict["branch"] == "branch-value" and conflict["branch_present"] is True
     assert conflict["key"] == encoded
     store.close()
+
+
+def test_api_commit_accepts_optional_compare_and_swap_version(tmp_path, monkeypatch):
+    store = PersistentWorkspace(tmp_path / "api-cas.db")
+    _ensure_api_test_schema(store)
+    monkeypatch.setattr(api, "workspace", store)
+    monkeypatch.setattr(api, "_branches", {})
+    context = {"principal_type": "agent", "agent_id": "agent-a"}
+    created = api.create_branch(api.BranchCreate(agent_id="agent-a", name="cas"), context)
+    branch = api._branches[created["id"]]["branch"]
+    expected = branch.base_version
+    branch.set("task", "done")
+    api._save_api_branch(created["id"], api._branches[created["id"]])
+
+    result = api.commit_branch(
+        created["id"], context, api.CommitRequest(expected_head_version=expected)
+    )
+    assert result["ok"] is True
+    assert store.head.data["task"] == "done"
+    store.close()
+
+
+def test_api_commit_returns_cas_mismatch_code(tmp_path, monkeypatch):
+    store = PersistentWorkspace(tmp_path / "api-cas-mismatch.db")
+    _ensure_api_test_schema(store)
+    store.seed({"task": "pending"})
+    monkeypatch.setattr(api, "workspace", store)
+    monkeypatch.setattr(api, "_branches", {})
+    context = {"principal_type": "agent", "agent_id": "agent-a"}
+    created = api.create_branch(api.BranchCreate(agent_id="agent-a", name="cas-stale"), context)
+    stale = api._branches[created["id"]]["branch"]
+    expected = stale.base_version
+    stale.set("task", "agent-write")
+    api._save_api_branch(created["id"], api._branches[created["id"]])
+
+    winner = store.create_branch("agent-b", "winner")
+    winner.set("task", "human-write")
+    store.commit("agent-b", winner)
+
+    result = api.commit_branch(
+        created["id"], context, api.CommitRequest(expected_head_version=expected)
+    )
+    assert result["ok"] is False
+    assert result["error_code"] == "cas_mismatch"
+    assert store.head.data["task"] == "human-write"
+    store.close()
