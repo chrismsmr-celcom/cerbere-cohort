@@ -7,7 +7,7 @@ services:
     plan: free
     rootDir: python
     buildCommand: pip install ".[postgres]"
-    startCommand: uvicorn cerbere_cohort.api:app --host 0.0.0.0 --port $PORT
+    startCommand: uvicorn cerbere_cohort.api:app --host 0.0.0.0 --port $PORT --workers 1
     healthCheckPath: /api/health
     envVars:
       - key: DATABASE_URL
@@ -18,5 +18,7 @@ services:
         sync: false
       - key: COHORT_ENV
         value: production
+      - key: WEB_CONCURRENCY
+        value: "1"
       - key: COHORT_REQUIRE_LEASES
         value: "false"
