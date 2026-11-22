@@ -128,3 +128,18 @@ def test_same_owner_renews_lease_without_changing_fencing_token():
     assert renewed.fencing_token == first.fencing_token
     assert renewed.expires_at > original_expiry
     assert lm.get_events()[-1].action == "lease.renew"
+
+
+
+def test_lease_validation_detects_boolean_write_over_integer():
+    ws = Workspace(require_leases=True)
+    ws.seed({"k": 1})
+    branch = ws.create_branch("agent-a", "type-change-without-lease")
+    # Simulate a stale or bypassed client mutating the public working tree.
+    # Commit-time validation must not treat True as the unchanged integer 1.
+    branch.current_data["k"] = True
+
+    with pytest.raises(LeaseError) as exc:
+        ws.commit("agent-a", branch)
+
+    assert exc.value.code == "lease_fenced"

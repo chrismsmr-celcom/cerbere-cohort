@@ -1,4 +1,5 @@
 # python/src/cerbere_cohort/workspace.py
+import base64
 import copy
 import json
 import threading
@@ -258,11 +259,18 @@ class Workspace:
             return
         base_data = base.data
         missing = object()
-        changed_keys = {
-            key
-            for key in set(base_data) | set(branch.current_data)
-            if base_data.get(key, missing) != branch.current_data.get(key, missing)
-        }
+        changed_keys = set()
+        for key in set(base_data) | set(branch.current_data):
+            before = base_data.get(key, missing)
+            after = branch.current_data.get(key, missing)
+            if before is missing or after is missing:
+                changed = before is not after
+            else:
+                # Python considers True == 1; lease enforcement must use the
+                # same JSON type identity as content hashing and merge logic.
+                changed = canonical_json(before) != canonical_json(after)
+            if changed:
+                changed_keys.add(key)
         active = self._lease_manager.get_active_leases()
         for key in changed_keys:
             lease = active.get(key)
@@ -279,6 +287,15 @@ class Workspace:
 
     @staticmethod
     def _conflict_path_tokens(path: str) -> Tuple[str, ...]:
+        if path.startswith("root-key:"):
+            encoded = path[len("root-key:"):]
+            encoded += "=" * (-len(encoded) % 4)
+            try:
+                return (base64.urlsafe_b64decode(encoded.encode("ascii")).decode("utf-8"),)
+            except (ValueError, UnicodeDecodeError) as exc:
+                raise ResolutionError(
+                    f"identifiant de clé racine invalide : {path}", details={"path": path}
+                ) from exc
         if not path.startswith("json-pointer:/"):
             return (path,)
         raw = path[len("json-pointer:/"):]

@@ -1,7 +1,7 @@
 """Critères de conformité v1 (docs/CONCEPTS.md §13) sur le modèle clé-valeur actuel."""
 import pytest
 
-from cerbere_cohort import ConflictError, Workspace
+from cerbere_cohort import ConflictError, PreferBranch, Workspace
 
 
 def seeded(**data):
@@ -217,3 +217,36 @@ def test_nested_delete_vs_modify_conflicts():
 
     assert exc.value.conflicting_keys == ["json-pointer:/config/feature"]
     assert ws.head.data["config"] == {}
+
+
+
+def test_nested_json_merge_distinguishes_boolean_from_integer():
+    ws = seeded(config={"count": 1})
+    branch = ws.create_branch("A", "bool-is-not-int")
+    branch.set("config", {"count": True})
+
+    ws.commit("A", branch)
+
+    assert ws.head.data["config"]["count"] is True
+
+
+def test_root_key_that_looks_like_json_pointer_is_not_parsed_as_nested_path():
+    pointer_like_key = "json-pointer:/config/status"
+    ws = Workspace()
+    ws.seed({pointer_like_key: "base", "config": {"status": "unchanged"}})
+    a, b = ws.create_branch("A", "root-pointer-a"), ws.create_branch("B", "root-pointer-b")
+    a.set(pointer_like_key, "from-A")
+    b.set(pointer_like_key, "from-B")
+
+    ws.commit("A", a)
+    ws.commit("B", b, resolver=PreferBranch())
+
+    assert ws.head.data[pointer_like_key] == "from-B"
+    assert ws.head.data["config"]["status"] == "unchanged"
+    resolution = [
+        event for event in ws.get_events()
+        if event.action == "coordination.resolved"
+    ][0]
+    assert resolution.payload["key"].startswith("root-key:")
+    replayed = Workspace.replay(ws.get_events(), ws.store)
+    assert replayed.head.data == ws.head.data
