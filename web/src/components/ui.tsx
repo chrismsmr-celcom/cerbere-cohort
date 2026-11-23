@@ -54,8 +54,8 @@ export function Tag({ tone, children }: { tone?: "ok" | "warn" | "err" | "accent
 export function PageHead({ title, description, actions }: { title: string; description: string; actions?: ReactNode }) {
   return <div className="page-head"><div><h1>{title}</h1><p>{description}</p></div><div className="row">{actions}</div></div>;
 }
-export function Card({ title, description, actions, children, className, flush = true }: { title?: string; description?: string; actions?: ReactNode; children?: ReactNode; className?: string; flush?: boolean }) {
-  return <section className={`card ${className || ""}`}>
+export function Card({ title, description, actions, children, className, id, flush = true }: { title?: string; description?: string; actions?: ReactNode; children?: ReactNode; className?: string; id?: string; flush?: boolean }) {
+  return <section id={id} className={`card ${className || ""}`}>
     {title && <div className="card-h"><div><h2>{title}</h2>{description && <p>{description}</p>}</div>{actions}</div>}
     {children && <div className={flush ? "card-b flush" : "card-b"}>{children}</div>}
   </section>;
