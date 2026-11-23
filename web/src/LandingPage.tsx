@@ -5,7 +5,7 @@ import {
   Menu, Radio, ShieldCheck, Workflow, X, Zap,
 } from "lucide-react";
 import cohortLogo from "./cohortLogo";
-import { crewaiLogo, langchainLogo } from "./frameworkLogos";
+import { crewaiLogo, langchainLogo, openaiLogo } from "./frameworkLogos";
 import "./landing.css";
 
 const steps = [
@@ -25,7 +25,7 @@ const capabilities = [
 const frameworks = [
   { name: "LangChain", note: "LangGraph · graph-based agent workflows", logo: langchainLogo, href: "https://www.langchain.com/langgraph" },
   { name: "CrewAI", note: "Role-based agent teams", logo: crewaiLogo, href: "https://www.crewai.com/" },
-  { name: "OpenAI Agents SDK", note: "Agent orchestration SDK", logo: "https://cdn.simpleicons.org/openai/000000", href: "https://openai.github.io/openai-agents-python/" },
+  { name: "OpenAI Agents SDK", note: "Agent orchestration SDK", logo: openaiLogo, href: "https://openai.github.io/openai-agents-python/" },
 ];
 
 const destinations = ["OpenTelemetry · OTLP/HTTP", "Splunk · HEC", "Datadog", "Microsoft Sentinel", "Elasticsearch"];
@@ -118,7 +118,6 @@ export default function LandingPage() {
       <main id="main">
         <section className="cs-hero">
           <div className="cs-hero-grid" aria-hidden="true" />
-          <div className="cs-petals" aria-hidden="true"><i /><i /><i /></div>
           <div className="cs-hero-inner">
             <div className="cs-eyebrow"><span className="cs-live-dot" /> MULTI-AGENT COORDINATION INFRASTRUCTURE</div>
             <h1><span className="cs-line">Independent agents.</span><span className="cs-line"><span className="cs-highlight">One coordinated</span> system.</span></h1>
@@ -130,7 +129,7 @@ export default function LandingPage() {
             <div className="cs-hero-note"><span className="cs-note-icon"><ShieldCheck size={15} /></span> Built for agents that share work, state, and responsibility.</div>
           </div>
 
-          <div className={`cs-demo-shell ${running ? "is-running" : ""}`} id="how" data-reveal>
+          <div className={`cs-demo-shell ${running ? "is-running" : ""}`} id="how">
             <div className="cs-preview-badge"><span /> INTERACTIVE PREVIEW · NOT THE LIVE DASHBOARD</div>
             <div className="cs-window-bar">
               <div className="cs-window-dots"><i /><i /><i /></div>
@@ -223,8 +222,8 @@ export default function LandingPage() {
           <div className="cs-framework-grid">
             {frameworks.map((framework) => (
               <a className="cs-framework-card" data-reveal href={framework.href} target="_blank" rel="noreferrer" key={framework.name}>
-                <div className="cs-framework-logo"><img src={framework.logo} alt="" loading="lazy" /></div>
-                <div><strong>{framework.name}</strong><span>{framework.note}</span></div>
+                <div className="cs-framework-logo"><img src={framework.logo} alt={framework.name} loading="lazy" /></div>
+                <span>{framework.note}</span>
                 <ArrowUpRight size={16} />
               </a>
             ))}
