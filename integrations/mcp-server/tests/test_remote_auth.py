@@ -107,12 +107,20 @@ def test_request_identity_and_scopes_are_enforced_per_tool(tmp_path):
     service = CohortService(tmp_path / "remote-mcp.db")
     read_only = _request_principal.set({
         "agent_id": "agent-a",
-        "scopes": ["workspace:read"],
+        "scopes": ["workspace:read", "workspace:write"],
     })
     try:
         assert service.get_state()["state"] == {}
         with pytest.raises(ValueError, match="identity bound"):
             service.create_branch("agent-b", "branch")
+    finally:
+        _request_principal.reset(read_only)
+
+    read_only = _request_principal.set({
+        "agent_id": "agent-a",
+        "scopes": ["workspace:read"],
+    })
+    try:
         with pytest.raises(MCPAuthorizationError):
             service.create_branch("agent-a", "branch")
     finally:
