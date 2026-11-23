@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import type { Session } from "@supabase/supabase-js";
 import Dashboard from "./Dashboard";
@@ -19,6 +19,10 @@ export default function App() {
   const [workspaces, setWorkspaces] = useState<CohortWorkspace[]>([]);
   const [workspaceId, setWorkspaceId] = useState(getActiveWorkspaceId);
   const [workspaceLoading, setWorkspaceLoading] = useState(false);
+  const [inviteToken, setInviteToken] = useState(() => new URLSearchParams(window.location.search).get("invite") || "");
+  const [inviteState, setInviteState] = useState<"idle" | "accepting" | "accepted" | "error">("idle");
+  const [inviteError, setInviteError] = useState("");
+  const inviteAttempted = useRef(false);
   const apiConfigured = Boolean((import.meta as any).env?.VITE_API_BASE_URL || (import.meta as any).env?.VITE_API_URL);
 
   useEffect(() => {
@@ -46,6 +50,31 @@ export default function App() {
   }, [session]);
 
   useEffect(() => { if (session) void loadWorkspaces(); else { setWorkspaces([]); setWorkspaceId(""); } }, [session, loadWorkspaces]);
+
+  useEffect(() => {
+    if (!session || !inviteToken || inviteState !== "idle" || inviteAttempted.current) return;
+    inviteAttempted.current = true;
+    setInviteState("accepting");
+    setInviteError("");
+    void (async () => {
+      try {
+        const result = await api<{ accepted: boolean; organization_id: string; role: string }>(
+          "/organizations/invitations/accept",
+          { method: "POST", body: JSON.stringify({ token: inviteToken }) },
+        );
+        setActiveWorkspaceId(result.organization_id);
+        const cleanUrl = new URL(window.location.href);
+        cleanUrl.searchParams.delete("invite");
+        window.history.replaceState({}, "", cleanUrl.pathname + cleanUrl.search + cleanUrl.hash);
+        setInviteToken("");
+        setInviteState("accepted");
+        await loadWorkspaces();
+      } catch (error) {
+        setInviteError(error instanceof Error ? error.message : "Unable to accept this invitation.");
+        setInviteState("error");
+      }
+    })();
+  }, [session, inviteToken, inviteState, loadWorkspaces]);
 
   async function completeOnboarding(payload: OnboardingPayload) {
     if (!supabase || !session) return;
@@ -81,7 +110,9 @@ export default function App() {
       setBusy(true); setMessage(null);
       const { error } = await supabase.auth.signInWithOtp({
         email: email.trim(),
-        options: { emailRedirectTo: `${window.location.origin}/app` },
+        options: { emailRedirectTo: inviteToken
+          ? `${window.location.origin}/app?invite=${encodeURIComponent(inviteToken)}`
+          : `${window.location.origin}/app` },
       });
       if (error) setMessage({ tone: "error", text: error.message });
       else { setSent(true); setMessage({ tone: "info", text: `We sent a secure link to ${email.trim()}. Check your inbox.` }); }
@@ -90,7 +121,10 @@ export default function App() {
     async function signInWithProvider(provider: "google" | "github" | "gitlab") {
       if (!supabase) return;
       setBusy(true); setMessage(null);
-      const { error } = await supabase.auth.signInWithOAuth({ provider, options: { redirectTo: `${window.location.origin}/app` } });
+      const redirectTo = inviteToken
+        ? `${window.location.origin}/app?invite=${encodeURIComponent(inviteToken)}`
+        : `${window.location.origin}/app`;
+      const { error } = await supabase.auth.signInWithOAuth({ provider, options: { redirectTo } });
       if (error) { setMessage({ tone: "error", text: error.message }); setBusy(false); }
     }
     return <SplitAuthScreen mode={authMode} email={email} busy={busy} sent={sent} message={message}
@@ -101,6 +135,15 @@ export default function App() {
     />;
   }
 
+  if (session && inviteToken && (inviteState === "idle" || inviteState === "accepting")) {
+    return <AuthScreen title="Accepting your invitation…" subtitle="Verifying the invitation and joining the workspace." />;
+  }
+  if (session && inviteToken && inviteState === "error") {
+    return <AuthScreen title="Invitation could not be accepted" message={{ tone: "error", text: inviteError }}>
+      <button className="btn btn-primary btn-lg btn-block" onClick={() => { inviteAttempted.current = false; setInviteState("idle"); }}>Retry invitation</button>
+      <button className="btn btn-secondary btn-lg btn-block" onClick={() => void supabase?.auth.signOut()}>Sign out and use the invited email</button>
+    </AuthScreen>;
+  }
   if (workspaceLoading) return <AuthScreen title="Loading your workspaces…" />;
   if (message?.tone === "error" && workspaces.length === 0) {
     return <AuthScreen title="Unable to load workspaces" message={message}>
