@@ -326,7 +326,6 @@ def test_readiness_rejects_a_disabled_signup_trigger(monkeypatch):
 
 
 def test_invitation_database_uses_public_connection_without_workspace_context(monkeypatch):
-    from fastapi import HTTPException
     from cerbere_cohort import api
 
     public_connection = object()
@@ -379,3 +378,42 @@ def test_invitation_acceptance_does_not_require_an_active_workspace(monkeypatch)
     assert "UPDATE public.cohort_invitations" in db.sql
     assert "INSERT INTO public.cohort_memberships" in db.sql
     assert db.committed is True
+
+
+def test_workspace_member_directory_is_scoped_to_the_current_organization(monkeypatch):
+    from cerbere_cohort import api
+
+    class Cursor:
+        def fetchall(self):
+            return [{
+                "user_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+                "email": "tester@example.com",
+                "full_name": "Beta Tester",
+                "job_title": "Engineer",
+                "role": "member",
+                "status": "active",
+                "created_at": "2026-11-23T12:00:00Z",
+            }]
+
+    class PublicDatabase:
+        sql = ""
+        params = ()
+
+        def execute(self, sql, params=()):
+            self.sql = sql
+            self.params = params
+            return Cursor()
+
+    db = PublicDatabase()
+    monkeypatch.setattr(api, "_membership_connection", db)
+
+    result = api.list_organization_members({
+        "organization_id": "22222222-2222-4222-8222-222222222222",
+        "role": "owner",
+        "user_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    })
+
+    assert len(result["items"]) == 1
+    assert result["items"][0]["email"] == "tester@example.com"
+    assert "WHERE m.organization_id = ?" in db.sql
+    assert db.params == ("22222222-2222-4222-8222-222222222222",)
