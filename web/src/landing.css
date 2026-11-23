@@ -338,7 +338,6 @@
 @keyframes cs-rise { from { opacity: 0; transform: translateY(26px); } to { opacity: 1; transform: none; } }
 @keyframes cs-pop { 0% { opacity: 0; transform: rotate(-6deg) scale(.7); } 60% { transform: rotate(-.4deg) scale(1.06); } 100% { opacity: 1; transform: rotate(-1.2deg) scale(1); } }
 @keyframes cs-sticker { 0%,100% { transform: rotate(-1.2deg); } 50% { transform: rotate(.6deg) translateY(-2px); } }
-@keyframes cs-float { 0%,100% { transform: translate3d(0,0,0) rotate(var(--r)); } 50% { transform: translate3d(var(--x),-26px,0) rotate(calc(var(--r) + 14deg)); } }
 @keyframes cs-drift { to { background-position: 22px 22px; } }
 .cs-eyebrow { animation: cs-rise .7s var(--ease) both; }
 .cs-hero h1 .cs-line { display: block; animation: cs-rise .8s var(--ease) both; }
@@ -351,11 +350,6 @@
 .cs-hero-grid { animation: cs-drift 5s linear infinite; }
 .cs-live-dot { animation: cs-ping 2s ease-out infinite; }
 @keyframes cs-ping { 0% { box-shadow: 0 0 0 0 #237b5866; } 100% { box-shadow: 0 0 0 10px #237b5800; } }
-.cs-petals { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
-.cs-petals i { position: absolute; width: clamp(70px,11vw,150px); aspect-ratio: 1; border-radius: 0 100% 0 100%; opacity: .5; animation: cs-float 9s ease-in-out infinite; }
-.cs-petals i:nth-child(1) { --r: -20deg; --x: 18px; left: 5%; top: 16%; background: #8b5cf6; }
-.cs-petals i:nth-child(2) { --r: 25deg; --x: -16px; right: 6%; top: 10%; background: #fb7185; animation-delay: -3s; }
-.cs-petals i:nth-child(3) { --r: 70deg; --x: 12px; left: 12%; top: 54%; background: #14b8a6; animation-delay: -6s; width: clamp(50px,7vw,100px); }
 
 /* Demo */
 .cs-preview-badge { position: static; display: flex; justify-content: center; gap: 8px; width: auto; padding: 7px 12px; border: 0; border-bottom: 2px solid var(--cs-ink); border-radius: 0; text-align: center; }
@@ -448,7 +442,6 @@
 @media (max-width: 900px) { .cs-framework-grid { grid-template-columns: repeat(2,minmax(0,1fr)); } }
 @media (max-width: 680px) {
   .cs-framework-grid { grid-template-columns: 1fr; }
-  .cs-petals i { opacity: .35; }
   .cs-demo-top { flex-direction: column; align-items: stretch; }
   .cs-run-button { justify-content: center; min-height: 42px; font-size: 12px; }
   .cs-window-bar { flex-wrap: wrap; padding: 8px 10px; }
@@ -472,3 +465,10 @@
   .cohort-site *, .cohort-site *::before, .cohort-site *::after { animation: none !important; transition: none !important; }
   .is-ready [data-reveal], .is-ready .cf-monument b { opacity: 1 !important; transform: none !important; }
 }
+
+/* Framework cards: official lockup on top, note below */
+.cs-framework-card { position: relative; flex-direction: column; align-items: flex-start; justify-content: center; gap: 16px; min-height: 130px; padding: 22px; }
+.cs-framework-logo { width: auto; max-width: 100%; height: 34px; }
+.cs-framework-logo img { width: auto; max-width: 100%; height: 100%; }
+.cs-framework-card > span { font-size: 13px; }
+.cs-framework-card > svg { position: absolute; top: 18px; right: 18px; margin: 0; }
