@@ -337,7 +337,7 @@ export default function Settings({ ctx, dark, setDark, mode, setMode }: { ctx: C
           <p>Use synthetic data and non-production agents. Do not submit customer data, credentials, personal information or confidential records.</p>
           <div className="row wrap">
             <a className="btn btn-secondary" href="https://github.com/chrismsmr-celcom/cerbere-cohort/issues/new?template=beta-feedback.yml" target="_blank" rel="noreferrer">Report beta feedback</a>
-            <a className="btn btn-secondary" href="https://github.com/chrismsmr-celcom/cerbere-cohort/security/advisories/new" target="_blank" rel="noreferrer">Report a vulnerability</a>
+            <a className="btn btn-secondary" href="https://github.com/chrismsmr-celcom/cerbere-cohort/blob/main/SECURITY.md" target="_blank" rel="noreferrer">Security reporting instructions</a>
           </div>
           <small className="muted">Cohort is coordination infrastructure. It is not a code sandbox, tool permission system or production safety boundary.</small>
         </div>
