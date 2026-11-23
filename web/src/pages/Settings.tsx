@@ -36,7 +36,7 @@ type Invitation = {
   revoked_at: string | null;
   created_at: string;
 };
-type CreatedInvitation = { id: string; email: string; role: string; expires_at: string; token: string };
+type CreatedInvitation = { id: string; email: string; role: string; expires_at: string; token: string; email_sent: boolean };
 
 export default function Settings({ ctx, dark, setDark, mode, setMode, canManageTeam }: { ctx: Ctx; dark: boolean; setDark: (v: boolean) => void; mode: SidebarMode; setMode: (m: SidebarMode) => void; canManageTeam: boolean }) {
   const s = ctx.data.settings;
@@ -66,6 +66,7 @@ export default function Settings({ ctx, dark, setDark, mode, setMode, canManageT
   const [inviteBusy, setInviteBusy] = useState(false);
   const [createdInvitation, setCreatedInvitation] = useState<CreatedInvitation | null>(null);
   const [revokingInvitationId, setRevokingInvitationId] = useState("");
+  const [resendingInvitationId, setResendingInvitationId] = useState("");
 
   const loadExport = async () => {
     setExportLoading(true);
@@ -238,6 +239,20 @@ export default function Settings({ ctx, dark, setDark, mode, setMode, canManageT
     }
   };
 
+  const resendInvitation = async (invitation: Invitation) => {
+    setResendingInvitationId(invitation.id);
+    setInvitationsError("");
+    try {
+      await api("/organizations/invitations/" + encodeURIComponent(invitation.id) + "/resend", { method: "POST" });
+      toast("Invitation email resent");
+      await loadInvitations();
+    } catch (error) {
+      setInvitationsError(error instanceof Error ? error.message : "Unable to resend invitation.");
+    } finally {
+      setResendingInvitationId("");
+    }
+  };
+
   const readinessEntries = readiness ? Object.entries(readiness.checks) : [];
 
   return <div className="page settings-page">
@@ -289,10 +304,10 @@ export default function Settings({ ctx, dark, setDark, mode, setMode, canManageT
             <label className="field c2">Expires<select value={inviteExpiry} onChange={(event) => setInviteExpiry(event.target.value)}><option value="7">7 days</option><option value="14">14 days</option><option value="30">30 days</option></select></label>
             <div className="c2" style={{ display: "flex", alignItems: "end" }}><button className="btn btn-primary" type="submit" disabled={inviteBusy || !inviteEmail.trim()}>{inviteBusy ? "Creating…" : "Create invite"}</button></div>
           </div>
-          <div className="notice">No invitation email is sent automatically in this beta. Create the link, copy it, and send it to the invited person yourself. They must sign in with the exact invited email address.</div>
+          <div className="notice">Cohort sends the invitation automatically by email. The invited person must sign in with the exact email address the invitation was sent to. You can also copy the link as a fallback.</div>
           {createdInvitation && <div className="notice success">
-            <div className="row wrap" style={{ justifyContent: "space-between" }}><strong>Invitation created for {createdInvitation.email}</strong><Tag tone="warn">Copy now</Tag></div>
-            <p className="muted">This token is shown only once. Anyone with the link can attempt to accept it, but the signed-in account email must match.</p>
+            <div className="row wrap" style={{ justifyContent: "space-between" }}><strong>Invitation email sent to {createdInvitation.email}</strong><Tag tone="ok">Email sent</Tag></div>
+            <p className="muted">The invitation is single-use and expires on {new Date(createdInvitation.expires_at).toLocaleDateString()}. Keep the link as a fallback; the signed-in account email must match.</p>
             <code style={{ display: "block", overflowWrap: "anywhere", padding: 12, background: "var(--surface-2)", borderRadius: 8 }}>{invitationUrl(createdInvitation)}</code>
             <button className="btn btn-secondary" type="button" onClick={() => void copyInvitation()}>Copy invitation link</button>
           </div>}
@@ -302,7 +317,7 @@ export default function Settings({ ctx, dark, setDark, mode, setMode, canManageT
           {invitations.map((invitation) => {
             const expired = new Date(invitation.expires_at).getTime() <= Date.now();
             const status = invitation.revoked_at ? "Revoked" : invitation.accepted_at ? "Accepted" : expired ? "Expired" : "Pending";
-            return <tr key={invitation.id}><td>{invitation.email}</td><td>{invitation.role}</td><td>{new Date(invitation.expires_at).toLocaleDateString()}</td><td>{status === "Pending" ? <Tag tone="ok">Pending</Tag> : <Tag>{status}</Tag>}</td><td>{status === "Pending" && <button className="btn btn-secondary" type="button" disabled={revokingInvitationId === invitation.id} onClick={() => void revokeInvitation(invitation)}>{revokingInvitationId === invitation.id ? "Revoking…" : "Revoke"}</button>}</td></tr>;
+            return <tr key={invitation.id}><td>{invitation.email}</td><td>{invitation.role}</td><td>{new Date(invitation.expires_at).toLocaleDateString()}</td><td>{status === "Pending" ? <Tag tone="ok">Pending</Tag> : <Tag>{status}</Tag>}</td><td><div className="row wrap">{(status === "Pending" || status === "Expired") && <button className="btn btn-secondary" type="button" disabled={resendingInvitationId === invitation.id} onClick={() => void resendInvitation(invitation)}>{resendingInvitationId === invitation.id ? "Sending…" : "Resend"}</button>}{status === "Pending" && <button className="btn btn-secondary" type="button" disabled={revokingInvitationId === invitation.id} onClick={() => void revokeInvitation(invitation)}>{revokingInvitationId === invitation.id ? "Revoking…" : "Revoke"}</button>}</div></td></tr>;
           })}
         </tbody></table></div>}
         <div className="row wrap" style={{ padding: "0 24px 20px" }}><button className="btn btn-secondary" type="button" onClick={() => void loadInvitations()} disabled={invitationsLoading}>Refresh invitations</button></div>
