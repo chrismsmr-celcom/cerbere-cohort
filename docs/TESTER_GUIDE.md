@@ -5,7 +5,7 @@ Cohort is accepting a small number of technical testers. This is a controlled be
 ## 1. Create your account and workspace
 
 1. Open the Cohort dashboard and sign in with email magic link, Google, GitHub, or GitLab. If you received a workspace invitation, open its link first and use the exact invited email address.
-2. Complete the workspace onboarding form.
+2. If you are creating a new workspace, complete the onboarding form. If you accepted an invitation, your existing workspace should appear automatically; do not create a second workspace.
 3. Open **Gateway → Agent credentials**.
 4. Create one credential for each agent. Use a distinct agent ID for every worker and a short expiry (7 or 30 days for a test).
 5. Copy each credential immediately. It is shown only once. Cohort stores its hash, not the original token.

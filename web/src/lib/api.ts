@@ -13,7 +13,12 @@ export const API_TIMEOUT_MS = Number.isFinite(configuredTimeout) && configuredTi
 
 export class ApiError extends Error {
   status: number;
-  constructor(message: string, status: number) { super(message); this.status = status; }
+  detail: unknown;
+  constructor(message: string, status: number, detail?: unknown) {
+    super(message);
+    this.status = status;
+    this.detail = detail;
+  }
 }
 export const isUnavailable = (error: unknown) => error instanceof ApiError && [404, 405, 501].includes(error.status);
 
@@ -78,8 +83,13 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
     throw new ApiError("Your session has expired. Please sign in again.", 401);
   }
   if (!response.ok) {
-    const detail = body?.detail;
-    throw new ApiError(typeof detail === "string" ? detail : detail?.message || JSON.stringify(detail || body), response.status);
+    const detail = body?.detail ?? body;
+    const message = typeof detail === "string"
+      ? detail
+      : typeof detail?.message === "string"
+        ? detail.message
+        : JSON.stringify(detail);
+    throw new ApiError(message, response.status, detail);
   }
   return body as T;
 }

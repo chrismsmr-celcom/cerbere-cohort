@@ -81,7 +81,7 @@ function Shell({ userEmail, onSignOut, workspaces, activeWorkspace, onWorkspaceC
         {tab === "performance" && <Performance ctx={ctx} />}
         {tab === "advisor" && <Advisor ctx={ctx} />}
         {tab === "coordination" && <Coordination ctx={ctx} />}
-        {tab === "settings" && <Settings ctx={ctx} dark={dark} setDark={setDark} mode={mode} setMode={setMode} />}
+        {tab === "settings" && <Settings ctx={ctx} dark={dark} setDark={setDark} mode={mode} setMode={setMode} canManageTeam={activeWorkspace?.role === "owner" || activeWorkspace?.role === "admin"} />}
       </main>
     </div>
     {modal?.kind === "create" && <CreateBranchModal onClose={close} run={run} busy={busy} />}

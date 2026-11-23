@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
-import { API_BASE, api } from "../lib/api";
+import { API_BASE, ApiError, api } from "../lib/api";
 import { getActiveWorkspaceId } from "../auth";
 import { Card, Disconnected, Empty, PageHead, Seg, TableSkeleton, Tag, useToast } from "../components/ui";
 import type { SidebarMode } from "../components/Sidebar";
@@ -38,7 +38,7 @@ type Invitation = {
 };
 type CreatedInvitation = { id: string; email: string; role: string; expires_at: string; token: string };
 
-export default function Settings({ ctx, dark, setDark, mode, setMode }: { ctx: Ctx; dark: boolean; setDark: (v: boolean) => void; mode: SidebarMode; setMode: (m: SidebarMode) => void }) {
+export default function Settings({ ctx, dark, setDark, mode, setMode, canManageTeam }: { ctx: Ctx; dark: boolean; setDark: (v: boolean) => void; mode: SidebarMode; setMode: (m: SidebarMode) => void; canManageTeam: boolean }) {
   const s = ctx.data.settings;
   const toast = useToast();
   const [exportConfig, setExportConfig] = useState<ExportConfig | null>(null);
@@ -83,19 +83,18 @@ export default function Settings({ ctx, dark, setDark, mode, setMode }: { ctx: C
 
   const loadReadiness = async () => {
     setReadinessLoading(true);
+    setReadiness(null);
     setReadinessError("");
     try {
       const result = await api<Readiness>("/ready");
       setReadiness(result);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unable to check API readiness.";
-      try {
-        const parsed = JSON.parse(message);
-        if (parsed?.checks) setReadiness({ ok: false, checks: parsed.checks });
-        else setReadinessError(message);
-      } catch {
-        setReadinessError(message);
+      const detail = error instanceof ApiError ? error.detail : undefined;
+      if (detail && typeof detail === "object" && "checks" in detail) {
+        setReadiness({ ok: false, checks: (detail as { checks: Record<string, boolean> }).checks });
       }
+      setReadinessError(message);
     } finally {
       setReadinessLoading(false);
     }
@@ -130,9 +129,11 @@ export default function Settings({ ctx, dark, setDark, mode, setMode }: { ctx: C
   useEffect(() => {
     void loadExport();
     void loadReadiness();
-    void loadMembers();
-    void loadInvitations();
-  }, []);
+    if (canManageTeam) {
+      void loadMembers();
+      void loadInvitations();
+    }
+  }, [canManageTeam]);
 
   const saveExport = async (event: FormEvent) => {
     event.preventDefault();
@@ -250,11 +251,15 @@ export default function Settings({ ctx, dark, setDark, mode, setMode }: { ctx: C
             : <Tag tone="err">Not ready</Tag>}
           <button className="btn btn-secondary" type="button" onClick={() => void loadReadiness()} disabled={readinessLoading}>Recheck</button>
         </div>
-        {readinessLoading ? <TableSkeleton rows={4} /> : readinessEntries.length ? <div className="tbl-wrap"><table><thead><tr><th>Check</th><th>Status</th></tr></thead><tbody>
-          {readinessEntries.map(([name, ok]) => <tr key={name}><td>{name.replace(/_/g, " ")}</td><td>{ok ? <Tag tone="ok">Passed</Tag> : <Tag tone="err">Failed</Tag>}</td></tr>)}
-        </tbody></table></div> : <div className="notice warn" style={{ margin: 16 }}>{readinessError || "No readiness response was returned."}</div>}
+        {readinessLoading ? <TableSkeleton rows={4} /> : <>
+          {readinessError && <div className="notice warn" style={{ margin: 16 }}>{readinessError}</div>}
+          {readinessEntries.length ? <div className="tbl-wrap"><table><thead><tr><th>Check</th><th>Status</th></tr></thead><tbody>
+            {readinessEntries.map(([name, ok]) => <tr key={name}><td>{name.replace(/_/g, " ")}</td><td>{ok ? <Tag tone="ok">Passed</Tag> : <Tag tone="err">Failed</Tag>}</td></tr>)}
+          </tbody></table></div> : !readinessError && <div className="notice warn" style={{ margin: 16 }}>No readiness response was returned.</div>}
+        </>}
       </Card>
 
+      {canManageTeam ? <>
       <Card className="c12" title="Workspace members" description="People who currently have access to this workspace. Visible to workspace owners and admins.">
         {membersLoading ? <TableSkeleton rows={3} /> : membersError ? <div className="notice warn" style={{ margin: 16 }}>{membersError}</div> : members.length === 0 ? <Empty title="No members found">This workspace does not have a member record yet.</Empty> : <div className="tbl-wrap"><table><thead><tr><th>Member</th><th>Role</th><th>Status</th><th>Joined</th></tr></thead><tbody>
           {members.map((member) => <tr key={member.user_id}><td><strong>{member.full_name || member.email || member.user_id.slice(0, 8)}</strong><small className="muted" style={{ display: "block" }}>{member.email || "No email available"}{member.job_title ? " · " + member.job_title : ""}</small></td><td>{member.role}</td><td>{member.status}</td><td>{new Date(member.created_at).toLocaleDateString()}</td></tr>)}
@@ -289,6 +294,9 @@ export default function Settings({ ctx, dark, setDark, mode, setMode }: { ctx: C
         <div className="row wrap" style={{ padding: "0 24px 20px" }}><button className="btn btn-secondary" type="button" onClick={() => void loadInvitations()} disabled={invitationsLoading}>Refresh invitations</button></div>
       </Card>
 
+      </> : <Card className="c12" title="Workspace access" description="Team management is restricted to workspace owners and admins.">
+        <div className="notice" style={{ margin: 16 }}>Your current role does not have permission to view the member directory or manage invitations. Ask a workspace owner or admin to manage access.</div>
+      </Card>}
       <Card className="c6" title="Storage and coordination" description="Reported by /api/settings">
         <Line label="Storage backend" value={s?.persistence || "—"} /><Line label="Database path" value={s?.database_path || "—"} />
         <Line label="Lease enforcement" value={s ? (s.require_leases ? "Required for writes" : "Advisory") : "—"} />
