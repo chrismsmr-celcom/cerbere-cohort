@@ -1230,7 +1230,10 @@ def _require_admin(context: dict[str, Any]) -> None:
 def _invitation_db():
     if not DATABASE_URL:
         raise HTTPException(status_code=503, detail="Organization invitations require PostgreSQL")
-    return workspace._conn
+    # Invitations and memberships live in the shared public schema. Acceptance
+    # happens before the invitee has an active workspace context, so this must
+    # use the global membership connection rather than WorkspaceProxy._conn.
+    return _membership_connection
 
 
 def _observability_db():
@@ -1368,7 +1371,7 @@ def create_organization_invitation(
             (context["organization_id"], body.email, body.role, token_hash,
              context["user_id"], expires_at.isoformat()),
         ).fetchone()
-        workspace._conn.commit()
+        _invitation_db().commit()
     except Exception as exc:
         raise HTTPException(status_code=503, detail="Unable to create organization invitation") from exc
     return {
@@ -1414,7 +1417,7 @@ def revoke_organization_invitation(
            RETURNING id""",
         (str(invitation_id), context["organization_id"]),
     ).fetchone()
-    workspace._conn.commit()
+    _invitation_db().commit()
     if not row:
         raise HTTPException(status_code=404, detail="Active invitation not found")
     return {"revoked": True, "id": str(invitation_id)}
@@ -1454,7 +1457,7 @@ def accept_organization_invitation(
                RETURNING organization_id, role""",
             (user_id, email, user_id, token_hash, email, user_id),
         ).fetchone()
-        workspace._conn.commit()
+        _invitation_db().commit()
     except Exception as exc:
         raise HTTPException(status_code=503, detail="Unable to accept organization invitation") from exc
     if not row:
