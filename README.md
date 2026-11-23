@@ -204,7 +204,34 @@ For local development, the server also supports Streamable HTTP on `127.0.0.1:87
 cerbere-cohort-mcp
 ```
 
-The MCP integration is an early implementation. Its branch registry is currently separate from the REST API branch registry. When `DATABASE_URL` is configured, the server requires stdio; authenticated remote MCP transport is not yet available. Do not expose the local HTTP transport publicly.
+### Hosted MCP (Streamable HTTP)
+
+The hosted MCP service supports authenticated remote connections when configured with PostgreSQL. Create an agent credential in the Cohort dashboard under **Gateway → Agent credentials**, then configure an MCP client that supports Streamable HTTP and custom request headers:
+
+```json
+{
+  "mcpServers": {
+    "cohort": {
+      "url": "https://mcp.cohort.cerbereag.site/mcp",
+      "headers": {
+        "Authorization": "Bearer <COHORT_AGENT_CREDENTIAL>"
+      }
+    }
+  }
+}
+```
+
+The credential is bound to one agent identity and its scopes. Treat it as a secret. It is displayed only once when created; revoke it from Gateway if it is exposed or lost.
+
+### Local MCP (stdio)
+
+For local development, run the server with stdio:
+
+```bash
+cerbere-cohort-mcp --transport stdio
+```
+
+The hosted MCP service and REST API currently maintain separate branch registries. Do not perform concurrent writes to the same workspace through both transports. Choose one transport for a test workspace.
 
 ## Use the interface that fits your setup
 

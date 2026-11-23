@@ -2,46 +2,86 @@
 
 Cohort is accepting a small number of technical testers. This is a controlled beta, not a production-critical coordination service.
 
-## What to test
+## 1. Create your account and workspace
 
-The most useful test is two or more agents working from the same workspace:
+1. Open the Cohort dashboard and sign in with email magic link, Google, GitHub, or GitLab.
+2. Complete the workspace onboarding form.
+3. Open **Gateway → Agent credentials**.
+4. Create one credential for each agent. Use a distinct agent ID for every worker and a short expiry (7 or 30 days for a test).
+5. Copy each credential immediately. It is shown only once. Cohort stores its hash, not the original token.
 
-1. Sign in to the hosted dashboard and select your workspace.
-2. Create separate agent credentials for each agent. Keep the credentials private; never paste them into an issue or event payload.
-3. Connect through the REST API. Use the workspace ID in `X-Organization-ID` and the agent credential as a Bearer token.
-4. Create two branches from the same workspace head before either branch is committed.
-5. Agent A acquires a lease for the shared key, writes its value, commits, and releases the lease.
-6. Agent B acquires the same key's lease and writes a different value through its older branch.
-7. Agent B commits. Cohort should report a conflict, not silently overwrite Agent A's value.
-8. Inspect the conflict, resolve it explicitly, and verify the resulting value in Shared state and the Event log.
-9. Open the Coordination page and confirm its agent, lease, branch, and event information matches the workspace.
+Do not share a credential between agents. Revoke it from Gateway when the test ends.
 
-The exact request schemas are available from the API's `/docs` endpoint. Do not infer payload fields from examples in old posts.
+## 2. Choose one connection transport
 
-## What is in scope
+### Hosted MCP
+
+Use the remote Streamable HTTP endpoint:
+
+```text
+https://mcp.cohort.cerbereag.site/mcp
+```
+
+Configure your MCP client with the credential in the HTTP Authorization header:
+
+```text
+Authorization: Bearer <agent-credential>
+```
+
+Your MCP client must support Streamable HTTP and custom request headers.
+
+### Hosted REST API
+
+Use:
+
+- API base: `https://api.cohort.cerbereag.site`
+- Workspace header: `X-Organization-ID: <workspace-id>`
+- Auth header: `Authorization: Bearer <agent-credential>`
+
+The agent ID in each request must match the identity bound to that credential. The API schemas are available at `https://api.cohort.cerbereag.site/docs`.
+
+**Important:** the REST API and MCP service currently maintain separate branch registries. Do not write to the same workspace through both transports at the same time. Choose one transport for the main test.
+
+## 3. Run the coordination test
+
+The recommended REST API test is:
+
+1. Create two distinct agent credentials, Agent A and Agent B.
+2. Create two branches from the same workspace head before either branch is committed.
+3. Agent A acquires a lease for a shared key, writes a value, commits, then releases the lease.
+4. Agent B acquires a lease for that same key and writes a different value through its older branch.
+5. Agent B attempts to commit. Cohort should report a conflict rather than silently overwrite Agent A's value.
+6. Inspect the conflict, resolve it explicitly, and verify the final value in Shared state and the Event log.
+7. Open Coordination and confirm its agent, lease, branch, and event information matches the workspace.
+
+Also test lease expiry, revocation of an agent credential, and access from a second organization if you have a second test account.
+
+## 4. What to test
 
 - Signup, login, onboarding, workspace selection, and membership boundaries.
-- Agent credential creation, scope enforcement, and revocation.
+- Agent credential creation, scope enforcement, expiry, and revocation.
 - Lease acquisition, expiry, handoff, and stale fencing-token rejection.
 - Branch creation, writes, commits, conflict inspection, and resolution.
 - Event history, dashboard consistency, and recovery after an API restart.
 - Isolation between two test organizations.
+- Remote MCP authentication and tool behavior, if using MCP.
 
-## Beta limitations
+## 5. Beta limitations
 
-- One hosted API instance and one Uvicorn worker. Do not load-test horizontal scaling.
-- Render Free may sleep when idle; the first request can be slow.
-- Remote authenticated MCP is not available. Use the REST API for hosted multi-agent tests. Do not run REST and local MCP writers concurrently against the same workspace.
+- The hosted REST API must run with one instance and one Uvicorn worker.
+- Render Free may sleep when idle; the first request after inactivity can be slow.
+- The REST API and MCP service have separate branch registries. Do not mix writes across them for the same workspace.
 - Cohort coordinates shared state; it does not sandbox code or authorize external tools.
 - Do not use Cohort as the sole protection for production workloads or irreversible actions.
+- The Performance page currently reports browser-measured request latency; do not treat it as a complete server-side monitoring system.
 
-## Data and safety rules
+## 6. Data and safety rules
 
 Use synthetic test records only. Do not submit passwords, API keys, agent credentials, personal information, customer data, confidential business information, or production records. Do not point test agents at production tools or accounts.
 
 If you find a security vulnerability, follow [SECURITY.md](../SECURITY.md) rather than opening a public issue.
 
-## Report a problem
+## 7. Report a problem
 
 Open a [Beta tester feedback issue](https://github.com/chrismsmr-celcom/cerbere-cohort/issues/new?template=beta-feedback.yml) and include:
 
@@ -54,15 +94,15 @@ Open a [Beta tester feedback issue](https://github.com/chrismsmr-celcom/cerbere-
 
 Remove workspace IDs, emails, tokens, URLs containing secrets, and all sensitive values before submitting logs. A minimal reproducible example with synthetic values is more useful than a full production trace.
 
-## Optional: export events to your observability platform
+## 8. Optional: export events to your observability platform
 
 Workspace owners and admins can connect one OTLP/HTTP logs destination from **Setting → External observability**.
 
-1. In Datadog, create or use an API key and select the OTLP logs intake endpoint for your Datadog site. A common US1 endpoint is `https://otlp.datadoghq.com/v1/logs`; use the matching endpoint for your region.
-2. In Cohort, paste the endpoint and set the authentication header name to `dd-api-key`; paste the API key as its value. For another OTLP backend, use the authentication header required by that backend (for example, `Authorization` with a Bearer token).
-3. Save the destination and select **Send test log**. Confirm that `cohort.export_test` appears in your backend.
+1. Configure the OTLP logs endpoint for your provider and region.
+2. Set the authentication header name and value required by that provider.
+3. Save the destination and select **Send test log**.
 4. Run the two-agent coordination test. New Cohort events should arrive asynchronously in the same logs stream.
 
-Cohort exports OTLP **logs** in this beta, not distributed traces or metrics. The exporter includes event IDs, action/agent metadata and selected coordination metadata. It deliberately excludes shared-state values, prompts, full change payloads and credentials. Credentials are encrypted at rest by the Cohort API. Delivery retries after endpoint failures; the export is at-least-once, so consumers should deduplicate using `cohort.event_id`.
+Cohort exports OTLP logs in this beta, not distributed traces or metrics. The exporter omits shared-state values, prompts, full change payloads, and credentials. Delivery is at-least-once; consumers should deduplicate using `cohort.event_id`.
 
 Do not paste API keys into feedback issues, screenshots, or event payloads. Remove the destination from Setting when you finish testing.
