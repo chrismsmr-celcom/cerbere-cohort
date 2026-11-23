@@ -6,6 +6,7 @@ database-backed workspace. Bind to loopback unless an authenticated proxy is use
 from __future__ import annotations
 
 import argparse
+import contextvars
 import functools
 import json
 import os
