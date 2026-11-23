@@ -251,7 +251,7 @@ export default function Settings({ ctx, dark, setDark, mode, setMode }: { ctx: C
           <button className="btn btn-secondary" type="button" onClick={() => void loadReadiness()} disabled={readinessLoading}>Recheck</button>
         </div>
         {readinessLoading ? <TableSkeleton rows={4} /> : readinessEntries.length ? <div className="tbl-wrap"><table><thead><tr><th>Check</th><th>Status</th></tr></thead><tbody>
-          {readinessEntries.map(([name, ok]) => <tr key={name}><td>{name.replaceAll("_", " ")}</td><td>{ok ? <Tag tone="ok">Passed</Tag> : <Tag tone="err">Failed</Tag>}</td></tr>)}
+          {readinessEntries.map(([name, ok]) => <tr key={name}><td>{name.replace(/_/g, " ")}</td><td>{ok ? <Tag tone="ok">Passed</Tag> : <Tag tone="err">Failed</Tag>}</td></tr>)}
         </tbody></table></div> : <div className="notice warn" style={{ margin: 16 }}>{readinessError || "No readiness response was returned."}</div>}
       </Card>
 
