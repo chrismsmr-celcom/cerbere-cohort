@@ -485,34 +485,55 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=int(os.getenv("COHORT_MCP_PORT", "8765")))
     args = parser.parse_args()
 
-    if os.getenv("DATABASE_URL") and args.transport != "stdio":
-        raise RuntimeError(
-            "Authenticated remote MCP transport is not enabled yet. "
-            "Use stdio; do not expose the shared production workspace over unauthenticated HTTP."
-        )
     database_url = os.getenv('DATABASE_URL', '').strip()
     agent_token = os.getenv('COHORT_MCP_AGENT_TOKEN', '').strip()
-    if database_url and not agent_token:
-        raise RuntimeError('COHORT_MCP_AGENT_TOKEN is required for production MCP authentication')
     organization_id = os.getenv('COHORT_ORGANIZATION_ID', '').strip() or None
+
     if database_url and not organization_id:
         raise RuntimeError('COHORT_ORGANIZATION_ID is required for production MCP schema isolation')
+
+    if not database_url and args.transport != "stdio" and args.host not in {"127.0.0.1", "localhost", "::1"}:
+        raise RuntimeError(
+            "Unauthenticated SQLite MCP HTTP is restricted to loopback. "
+            "Configure DATABASE_URL and COHORT_ORGANIZATION_ID for remote access."
+        )
+
     service = CohortService(
         args.db,
         organization_id=organization_id,
         require_leases=True if database_url else None,
     )
+
     if database_url:
+        # Credential records live in public schema; this adapter is thread-safe.
         configure_membership_db(service._db)
-        principal = authenticate_agent_token(agent_token, organization_id)
-        expected_agent_id = os.getenv('COHORT_MCP_AGENT_ID', '').strip()
-        if expected_agent_id and expected_agent_id != principal['agent_id']:
-            raise RuntimeError('COHORT_MCP_AGENT_ID does not match the supplied agent credential')
-        service.bind_agent_identity(principal['agent_id'], principal['scopes'])
-    mcp = create_server(service, host=args.host, port=args.port)
+
     if args.transport == "stdio":
+        if database_url:
+            if not agent_token:
+                raise RuntimeError('COHORT_MCP_AGENT_TOKEN is required for production stdio authentication')
+            principal = authenticate_agent_token(agent_token, organization_id)
+            expected_agent_id = os.getenv('COHORT_MCP_AGENT_ID', '').strip()
+            if expected_agent_id and expected_agent_id != principal['agent_id']:
+                raise RuntimeError('COHORT_MCP_AGENT_ID does not match the supplied agent credential')
+            service.bind_agent_identity(principal['agent_id'], principal['scopes'])
+        mcp = create_server(service, host=args.host, port=args.port)
         mcp.run(transport="stdio")
+        return
+
+    mcp = create_server(service, host=args.host, port=args.port)
+    if database_url:
+        # Each HTTP request authenticates its own agent token. No process-wide
+        # agent identity is shared between concurrent MCP clients.
+        import uvicorn
+
+        app = MCPAgentAuthMiddleware(
+            mcp.streamable_http_app(),
+            organization_id=organization_id,
+        )
+        uvicorn.run(app, host=args.host, port=args.port, log_level="info")
     else:
+        # Local-only development transport; never bind unauthenticated mode publicly.
         mcp.run(transport="streamable-http")
 
 
