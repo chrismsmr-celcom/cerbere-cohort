@@ -61,6 +61,77 @@ class MCPAuthorizationError(CerbereError):
     code = 'insufficient_scope'
 
 
+_request_principal: contextvars.ContextVar[dict[str, Any] | None] = contextvars.ContextVar(
+    "cohort_mcp_request_principal", default=None
+)
+
+
+class MCPAgentAuthMiddleware:
+    """Authenticate every remote MCP HTTP request with its own agent credential."""
+
+    def __init__(self, app, organization_id: str):
+        self.app = app
+        self.organization_id = organization_id
+
+    @staticmethod
+    async def _reject(send, status: int, message: str) -> None:
+        body = json.dumps({"error": message}).encode("utf-8")
+        await send({
+            "type": "http.response.start",
+            "status": status,
+            "headers": [
+                (b"content-type", b"application/json"),
+                (b"content-length", str(len(body)).encode("ascii")),
+                (b"cache-control", b"no-store"),
+            ],
+        })
+        await send({"type": "http.response.body", "body": body})
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") != "http":
+            await self.app(scope, receive, send)
+            return
+
+        headers = {key.lower(): value for key, value in scope.get("headers", [])}
+        authorization = headers.get(b"authorization", b"").decode("latin-1").strip()
+        if not authorization.startswith("Bearer "):
+            await self._reject(send, 401, "Bearer agent credential required")
+            return
+
+        agent_token = authorization[7:].strip()
+        if not agent_token:
+            await self._reject(send, 401, "Bearer agent credential required")
+            return
+
+        supplied_org = headers.get(b"x-organization-id")
+        if supplied_org:
+            try:
+                supplied_org_text = supplied_org.decode("ascii").strip()
+            except UnicodeDecodeError:
+                await self._reject(send, 400, "Invalid X-Organization-ID header")
+                return
+            if supplied_org_text.lower() != self.organization_id.lower():
+                await self._reject(send, 403, "Credential is not valid for this organization")
+                return
+
+        try:
+            principal = authenticate_agent_token(agent_token, self.organization_id)
+        except Exception as exc:  # fail closed at the transport boundary
+            status = getattr(exc, "status_code", 503)
+            if status not in {400, 401, 403, 503}:
+                status = 503
+            detail = getattr(exc, "detail", None)
+            message = detail if isinstance(detail, str) else "Unable to authenticate agent credential"
+            await self._reject(send, status, message)
+            return
+
+        request_token = _request_principal.set(principal)
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            _request_principal.reset(request_token)
+
+
 class CohortService:
     """Thread-safe MCP-facing facade over PersistentWorkspace."""
 
