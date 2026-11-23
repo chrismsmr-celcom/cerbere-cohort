@@ -94,6 +94,29 @@ class MCPAgentAuthMiddleware:
             await self.app(scope, receive, send)
             return
 
+        # Render's health probe must not require an agent credential. Keep this
+        # endpoint deliberately minimal: it exposes no tenant or database data.
+        path = scope.get("path", "")
+        method = scope.get("method", "").upper()
+        if (path == "/api/health" and method in {"GET", "HEAD"}) or (
+            path == "/" and method == "HEAD"
+        ):
+            body = b'{"status":"ok"}'
+            await send({
+                "type": "http.response.start",
+                "status": 200,
+                "headers": [
+                    (b"content-type", b"application/json"),
+                    (b"content-length", str(len(body)).encode("ascii")),
+                    (b"cache-control", b"no-store"),
+                ],
+            })
+            await send({
+                "type": "http.response.body",
+                "body": b"" if method == "HEAD" else body,
+            })
+            return
+
         headers = {key.lower(): value for key, value in scope.get("headers", [])}
         authorization = headers.get(b"authorization", b"").decode("latin-1").strip()
         if not authorization.startswith("Bearer "):
