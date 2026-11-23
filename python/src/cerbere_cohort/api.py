@@ -1230,7 +1230,10 @@ def _require_admin(context: dict[str, Any]) -> None:
 def _invitation_db():
     if not DATABASE_URL:
         raise HTTPException(status_code=503, detail="Organization invitations require PostgreSQL")
-    return workspace._conn
+    # Invitations and memberships live in the shared public schema. Acceptance
+    # happens before the invitee has an active workspace context, so this must
+    # use the global membership connection rather than WorkspaceProxy._conn.
+    return _membership_connection
 
 
 def _observability_db():
@@ -1350,6 +1353,38 @@ def delete_observability_export(
     return {"deleted": True}
 
 
+@app.get("/api/organizations/members")
+def list_organization_members(
+    context: dict[str, Any] = Depends(require_workspace_member),
+):
+    _require_admin(context)
+    try:
+        rows = _membership_connection.execute(
+            """SELECT m.user_id, m.role, m.status, m.created_at,
+                      u.email, p.full_name, p.job_title
+               FROM public.cohort_memberships m
+               LEFT JOIN auth.users u ON u.id = m.user_id
+               LEFT JOIN public.cohort_user_profiles p ON p.user_id = m.user_id
+               WHERE m.organization_id = ?
+               ORDER BY m.created_at ASC LIMIT 500""",
+            (context["organization_id"],),
+        ).fetchall()
+    except Exception as exc:
+        logger.exception("Unable to list organization members")
+        raise HTTPException(status_code=503, detail="Unable to list organization members") from exc
+    return {"items": [
+        {
+            "user_id": str(row["user_id"]),
+            "email": row["email"],
+            "full_name": row["full_name"],
+            "job_title": row["job_title"],
+            "role": row["role"],
+            "status": row["status"],
+            "created_at": row["created_at"],
+        } for row in rows
+    ]}
+
+
 @app.post("/api/organizations/invitations", status_code=201)
 def create_organization_invitation(
     body: InvitationCreate,
@@ -1368,7 +1403,7 @@ def create_organization_invitation(
             (context["organization_id"], body.email, body.role, token_hash,
              context["user_id"], expires_at.isoformat()),
         ).fetchone()
-        workspace._conn.commit()
+        _invitation_db().commit()
     except Exception as exc:
         raise HTTPException(status_code=503, detail="Unable to create organization invitation") from exc
     return {
@@ -1414,7 +1449,7 @@ def revoke_organization_invitation(
            RETURNING id""",
         (str(invitation_id), context["organization_id"]),
     ).fetchone()
-    workspace._conn.commit()
+    _invitation_db().commit()
     if not row:
         raise HTTPException(status_code=404, detail="Active invitation not found")
     return {"revoked": True, "id": str(invitation_id)}
@@ -1454,7 +1489,7 @@ def accept_organization_invitation(
                RETURNING organization_id, role""",
             (user_id, email, user_id, token_hash, email, user_id),
         ).fetchone()
-        workspace._conn.commit()
+        _invitation_db().commit()
     except Exception as exc:
         raise HTTPException(status_code=503, detail="Unable to accept organization invitation") from exc
     if not row:

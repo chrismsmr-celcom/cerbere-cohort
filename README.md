@@ -248,7 +248,7 @@ The REST service is built with FastAPI. In hosted PostgreSQL mode, it validates 
 ## Deployment
 
 - [Deploy the SaaS beta](docs/DEPLOYMENT.md) — Vercel, Render, Supabase, environment variables, and verification.
-- [Closed beta tester guide](docs/TESTER_GUIDE.md) — safe test scope, the multi-agent golden path, known limits, and feedback reporting.
+- [Closed beta tester guide](docs/TESTER_GUIDE.md) — account setup, workspace invitations, agent credentials, the multi-agent golden path, known limits, and feedback reporting.
 - [Self-host Cohort Community](docs/SELF_HOSTING.md) — Docker Compose with local SQLite.
 - [Traction measurement](docs/TRACTION.md) — GitHub clone archive, opt-in installation telemetry, and product adoption metrics.
 
@@ -295,7 +295,7 @@ A few implementation details matter when evaluating the current release:
 
 - Multiple organizations are isolated into separate PostgreSQL schemas, but the hosted API must run as one instance and one Uvicorn worker because runtime and branch registries are process-local.
 - The MCP server uses a separate branch registry from the REST API.
-- The MCP server requires stdio when `DATABASE_URL` is configured; authenticated remote MCP transport is not implemented.
+- The hosted MCP server supports authenticated Streamable HTTP. Its branch registry remains separate from the REST API registry, so do not write through both transports to the same workspace during a test.
 - The workspace is key-value based. Conflict detection operates at key granularity.
 - The Rust trace analyzer is an early tool for basic JSONL analysis.
 - Agent credentials are bound to an agent identity, and audit events distinguish the authenticated actor from the target agent. Cohort does not provide external tool authorization or code sandboxing.

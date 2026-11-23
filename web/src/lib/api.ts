@@ -33,17 +33,26 @@ function record(sample: Sample) {
   listeners.forEach((fn) => fn());
 }
 
+const WORKSPACE_OPTIONAL_PATHS = new Set([
+  "/workspaces",
+  "/onboarding",
+  // Invite acceptance must work before the invitee belongs to a workspace.
+  "/organizations/invitations/accept",
+]);
+
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
+  const workspaceOptional = WORKSPACE_OPTIONAL_PATHS.has(path);
+  const activeWorkspaceId = getActiveWorkspaceId();
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
-    ...(["/workspaces", "/onboarding"].includes(path) ? {} : (getActiveWorkspaceId() ? { "X-Organization-ID": getActiveWorkspaceId() } : {})),
+    ...(!workspaceOptional && activeWorkspaceId ? { "X-Organization-ID": activeWorkspaceId } : {}),
     ...((init?.headers || {}) as Record<string, string>),
   };
   if (supabase) {
     const { data } = await supabase.auth.getSession();
     if (data.session?.access_token) headers.Authorization = `Bearer ${data.session.access_token}`;
   }
-  if (!["/workspaces", "/onboarding"].includes(path) && !getActiveWorkspaceId() && supabase) {
+  if (!workspaceOptional && !activeWorkspaceId && supabase) {
     throw new ApiError("Select a workspace before using the Cohort runtime.", 400);
   }
   const controller = new AbortController();
