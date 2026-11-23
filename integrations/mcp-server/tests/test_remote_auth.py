@@ -8,6 +8,7 @@ from mcp_server import (
     CohortService,
     MCPAgentAuthMiddleware,
     MCPAuthorizationError,
+    create_server,
     _request_principal,
 )
 
@@ -255,3 +256,13 @@ def test_tenant_router_evicts_only_idle_tenant_services(monkeypatch):
     assert created[0].closed is True
     assert created[1].closed is False
     router.close()
+
+
+
+def test_fastmcp_exposes_asgi_streamable_http_app(tmp_path):
+    service = CohortService(tmp_path / "streamable-http.db")
+    try:
+        app = create_server(service).streamable_http_app()
+        assert callable(app)
+    finally:
+        service.close()
