@@ -240,11 +240,25 @@ export default function Settings({ ctx, dark, setDark, mode, setMode, canManageT
 
   const readinessEntries = readiness ? Object.entries(readiness.checks) : [];
 
-  return <div className="page">
-    <PageHead title="Setting" description="Workspace access, deployment readiness and operational configuration." />
+  return <div className="page settings-page">
+    <PageHead title="Settings" description="Manage your workspace, integrations and preferences." />
     {ctx.data.error && <Disconnected message={ctx.data.error} onRetry={ctx.refresh} />}
+    <div className="settings-layout">
+      <nav className="settings-nav" aria-label="Settings sections">
+        <span className="settings-nav-label">SETTINGS</span>
+        <a href="#settings-readiness">Deployment</a>
+        <a href="#settings-members">Members</a>
+        <a href="#settings-invitations">Invitations</a>
+        <a href="#settings-storage">Storage</a>
+        <a href="#settings-runtime">Runtime</a>
+        <a href="#settings-observability">External observability</a>
+        <a href="#settings-support">Support & security</a>
+        <a href="#settings-appearance">Appearance</a>
+        <a href="#settings-connection">API connection</a>
+      </nav>
+      <div className="settings-main">
     <div className="grid">
-      <Card className="c12" title="Deployment readiness" description="Live checks against the REST API, PostgreSQL schema, Supabase authentication and CORS.">
+      <Card id="settings-readiness" className="c12" title="Deployment readiness" description="Live checks against the REST API, PostgreSQL schema, Supabase authentication and CORS.">
         <div className="row wrap" style={{ alignItems: "center", justifyContent: "space-between", padding: "0 24px 12px" }}>
           {readinessLoading ? <span className="muted">Checking deployment…</span> : readiness?.ok
             ? <Tag tone="ok">All readiness checks passed</Tag>
@@ -260,14 +274,14 @@ export default function Settings({ ctx, dark, setDark, mode, setMode, canManageT
       </Card>
 
       {canManageTeam ? <>
-      <Card className="c12" title="Workspace members" description="People who currently have access to this workspace. Visible to workspace owners and admins.">
+      <Card id="settings-members" className="c12" title="Workspace members" description="People who currently have access to this workspace. Visible to workspace owners and admins.">
         {membersLoading ? <TableSkeleton rows={3} /> : membersError ? <div className="notice warn" style={{ margin: 16 }}>{membersError}</div> : members.length === 0 ? <Empty title="No members found">This workspace does not have a member record yet.</Empty> : <div className="tbl-wrap"><table><thead><tr><th>Member</th><th>Role</th><th>Status</th><th>Joined</th></tr></thead><tbody>
           {members.map((member) => <tr key={member.user_id}><td><strong>{member.full_name || member.email || member.user_id.slice(0, 8)}</strong><small className="muted" style={{ display: "block" }}>{member.email || "No email available"}{member.job_title ? " · " + member.job_title : ""}</small></td><td>{member.role}</td><td>{member.status}</td><td>{new Date(member.created_at).toLocaleDateString()}</td></tr>)}
         </tbody></table></div>}
         <div className="row wrap" style={{ padding: "0 24px 20px" }}><button className="btn btn-secondary" type="button" onClick={() => void loadMembers()} disabled={membersLoading}>Refresh members</button></div>
       </Card>
 
-      <Card className="c12" title="Invite a teammate" description="Create an expiring, single-use invitation link for a specific email address.">
+      <Card id="settings-invitations" className="c12" title="Invite a teammate" description="Create an expiring, single-use invitation link for a specific email address.">
         <form className="stack" style={{ padding: "0 24px 20px" }} onSubmit={createInvitation}>
           <div className="grid">
             <label className="field c6">Email address<input type="email" required maxLength={320} value={inviteEmail} onChange={(event) => setInviteEmail(event.target.value)} placeholder="teammate@company.com" /></label>
@@ -294,21 +308,21 @@ export default function Settings({ ctx, dark, setDark, mode, setMode, canManageT
         <div className="row wrap" style={{ padding: "0 24px 20px" }}><button className="btn btn-secondary" type="button" onClick={() => void loadInvitations()} disabled={invitationsLoading}>Refresh invitations</button></div>
       </Card>
 
-      </> : <Card className="c12" title="Workspace access" description="Team management is restricted to workspace owners and admins.">
+      </> : <Card id="settings-members" className="c12" title="Workspace access" description="Team management is restricted to workspace owners and admins.">
         <div className="notice" style={{ margin: 16 }}>Your current role does not have permission to view the member directory or manage invitations. Ask a workspace owner or admin to manage access.</div>
       </Card>}
-      <Card className="c6" title="Storage and coordination" description="Reported by /api/settings">
+      <Card id="settings-storage" className="c6" title="Storage and coordination" description="Reported by /api/settings">
         <Line label="Storage backend" value={s?.persistence || "—"} /><Line label="Database path" value={s?.database_path || "—"} />
         <Line label="Lease enforcement" value={s ? (s.require_leases ? "Required for writes" : "Advisory") : "—"} />
         <Line label="Database transactions" value={s ? (s.database_transactions ? "Yes" : "No") : "—"} />
       </Card>
-      <Card className="c6" title="Runtime capabilities" description="Features reported by the API adapter">
+      <Card id="settings-runtime" className="c6" title="Runtime capabilities" description="Features reported by the API adapter">
         <Line label="Multi-process coordination" value={s ? (s.multi_process ? "Enabled" : "Single process") : "—"} />
         <Line label="Authentication" value={s ? (s.authentication === "supabase" ? "Supabase JWT + membership checks" : "Not configured (development)") : "—"} />
         <div style={{ padding: "16px 24px 24px" }}><div className="notice warn"><div className="grow"><strong>Deployment note</strong>Workspace access is selected per signed-in user. Membership is checked by the API on each request.</div></div></div>
       </Card>
 
-      <Card className="c12 observability-card" title="External observability" description="Forward Cohort coordination events to your OTLP/HTTP logs backend.">
+      <Card id="settings-observability" className="c12 observability-card settings-observability" title="External observability" description="Forward Cohort coordination events to your OTLP/HTTP logs backend.">
         {exportLoading ? <div className="muted">Loading exporter configuration…</div> : <>
           <div className="observability-heading">
             <div className="observability-copy">
@@ -340,7 +354,7 @@ export default function Settings({ ctx, dark, setDark, mode, setMode, canManageT
         </>}
       </Card>
 
-      <Card className="c6" title="Beta support" description="Report reproducible problems and keep production systems out of this beta.">
+      <Card id="settings-support" className="c6" title="Beta support" description="Report reproducible problems and keep production systems out of this beta.">
         <div style={{ padding: "0 24px 20px" }} className="stack">
           <p>Use synthetic data and non-production agents. Do not submit customer data, credentials, personal information or confidential records.</p>
           <div className="row wrap">
@@ -351,15 +365,17 @@ export default function Settings({ ctx, dark, setDark, mode, setMode, canManageT
         </div>
       </Card>
 
-      <Card className="c6" title="Appearance" description="Saved in this browser">
+      <Card id="settings-appearance" className="c6" title="Appearance" description="Saved in this browser">
         <div className="kv"><span>Theme</span><Seg label="Theme" value={dark ? "dark" : "light"} onChange={(v) => setDark(v === "dark")} options={[{ id: "light", label: "Light" }, { id: "dark", label: "Dark" }]} /></div>
         <div className="kv"><span>Sidebar</span><Seg label="Sidebar mode" value={mode} onChange={setMode} options={[{ id: "expanded", label: "Expanded" }, { id: "hover", label: "On hover" }, { id: "collapsed", label: "Collapsed" }]} /></div>
       </Card>
-      <Card className="c6" title="API connection" description="Set at build time with VITE_* variables">
+      <Card id="settings-connection" className="c6" title="API connection" description="Set at build time with VITE_* variables">
         <Line label="API base URL" value={API_BASE || "Same origin (proxied to /api)"} />
         <Line label="Active workspace ID" value={getActiveWorkspaceId() ? `${getActiveWorkspaceId().slice(0, 8)}…` : "Not selected"} />
         <div className="kv"><span>Status</span>{ctx.data.connected ? <Tag tone="ok">Connected</Tag> : <Tag tone="err">Offline</Tag>}</div>
       </Card>
+    </div>
+      </div>
     </div>
   </div>;
 }
