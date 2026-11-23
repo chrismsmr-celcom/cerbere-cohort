@@ -29,6 +29,12 @@ from cerbere_cohort.observability import (
     encrypt_headers, decrypt_headers, normalize_otlp_endpoint,
     validate_headers, send_otlp_logs,
 )
+from cerbere_cohort.email import (
+    EmailDeliveryError,
+    build_workspace_invitation_url,
+    resend_is_configured,
+    send_workspace_invitation_email,
+)
 from cerbere_cohort.auth import (
     configure_membership_db,
     require_workspace_member,
@@ -1391,11 +1397,20 @@ def create_organization_invitation(
     context: dict[str, Any] = Depends(require_workspace_member),
 ):
     _require_admin(context)
+    if not resend_is_configured():
+        raise HTTPException(status_code=503, detail="Workspace invitation email is not configured (RESEND_API_KEY is missing)")
+
     token = secrets.token_urlsafe(32)
     token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
     expires_at = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=body.expires_in_days)
     try:
-        row = _invitation_db().execute(
+        db = _invitation_db()
+        organization = db.execute(
+            "SELECT name FROM public.cohort_organizations WHERE id = ?",
+            (context["organization_id"],),
+        ).fetchone()
+        workspace_name = str(organization["name"]) if organization else "your Cohort workspace"
+        row = db.execute(
             """INSERT INTO public.cohort_invitations
                (organization_id, email, role, token_hash, invited_by, expires_at)
                VALUES (?, ?, ?, ?, ?, ?)
@@ -1403,9 +1418,37 @@ def create_organization_invitation(
             (context["organization_id"], body.email, body.role, token_hash,
              context["user_id"], expires_at.isoformat()),
         ).fetchone()
-        _invitation_db().commit()
+        db.commit()
     except Exception as exc:
+        _invitation_db().rollback()
+        logger.exception("Unable to create organization invitation")
         raise HTTPException(status_code=503, detail="Unable to create organization invitation") from exc
+
+    try:
+        invite_url = build_workspace_invitation_url(token)
+        email_id = send_workspace_invitation_email(
+            to_email=body.email,
+            invite_url=invite_url,
+            role=body.role,
+            workspace_name=workspace_name,
+        )
+    except EmailDeliveryError as exc:
+        try:
+            db.execute(
+                """UPDATE public.cohort_invitations SET revoked_at = now()
+                   WHERE id = ? AND organization_id = ? AND accepted_at IS NULL""",
+                (str(row["id"]), context["organization_id"]),
+            )
+            db.commit()
+        except Exception:
+            db.rollback()
+            logger.exception("Failed to revoke invitation after email delivery failure")
+        logger.warning("Workspace invitation email failed (%s)", type(exc).__name__)
+        raise HTTPException(
+            status_code=502,
+            detail="Invitation email could not be sent. The invitation was revoked; verify Resend sender configuration and retry.",
+        ) from exc
+
     return {
         "id": str(row["id"]),
         "email": row["email"],
@@ -1413,6 +1456,82 @@ def create_organization_invitation(
         "expires_at": row["expires_at"],
         "created_at": row["created_at"],
         "token": token,
+        "email_sent": True,
+        "email_id": email_id,
+    }
+
+
+@app.post("/api/organizations/invitations/{invitation_id}/resend")
+def resend_organization_invitation(
+    invitation_id: UUID,
+    context: dict[str, Any] = Depends(require_workspace_member),
+):
+    _require_admin(context)
+    if not resend_is_configured():
+        raise HTTPException(status_code=503, detail="Workspace invitation email is not configured (RESEND_API_KEY is missing)")
+
+    db = _invitation_db()
+    row = db.execute(
+        """SELECT i.id, i.email, i.role, i.token_hash, i.expires_at, o.name AS workspace_name
+           FROM public.cohort_invitations i
+           JOIN public.cohort_organizations o ON o.id = i.organization_id
+           WHERE i.id = ? AND i.organization_id = ?
+             AND i.accepted_at IS NULL AND i.revoked_at IS NULL""",
+        (str(invitation_id), context["organization_id"]),
+    ).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Invitation not found or no longer resendable")
+
+    token = secrets.token_urlsafe(32)
+    token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    previous_hash = row["token_hash"]
+    previous_expiry = row["expires_at"]
+    expires_at = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=7)
+    try:
+        db.execute(
+            """UPDATE public.cohort_invitations
+               SET token_hash = ?, expires_at = ?
+               WHERE id = ? AND organization_id = ? AND accepted_at IS NULL AND revoked_at IS NULL""",
+            (token_hash, expires_at.isoformat(), str(invitation_id), context["organization_id"]),
+        )
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        logger.exception("Unable to rotate workspace invitation token")
+        raise HTTPException(status_code=503, detail="Unable to prepare invitation resend") from exc
+
+    try:
+        invite_url = build_workspace_invitation_url(token)
+        email_id = send_workspace_invitation_email(
+            to_email=row["email"],
+            invite_url=invite_url,
+            role=row["role"],
+            workspace_name=row["workspace_name"],
+        )
+    except EmailDeliveryError as exc:
+        try:
+            db.execute(
+                """UPDATE public.cohort_invitations SET token_hash = ?, expires_at = ?
+                   WHERE id = ? AND organization_id = ? AND accepted_at IS NULL AND revoked_at IS NULL
+                     AND token_hash = ?""",
+                (previous_hash, previous_expiry, str(invitation_id), context["organization_id"], token_hash),
+            )
+            db.commit()
+        except Exception:
+            db.rollback()
+            logger.exception("Failed to restore invitation after resend failure")
+        logger.warning("Workspace invitation resend failed (%s)", type(exc).__name__)
+        raise HTTPException(
+            status_code=502,
+            detail="Invitation email could not be resent. The previous invitation link remains valid if restoration succeeded.",
+        ) from exc
+
+    return {
+        "resent": True,
+        "email": row["email"],
+        "expires_at": expires_at.isoformat(),
+        "email_sent": True,
+        "email_id": email_id,
     }
 
 
