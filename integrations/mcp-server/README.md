@@ -64,15 +64,16 @@ syntax varies; use its Streamable HTTP MCP transport and the URL above.
 
 ## Remote Streamable HTTP on Render
 
-For a public MCP endpoint, deploy one MCP Web Service for one Cohort organization.
-The PostgreSQL schema is selected by `COHORT_ORGANIZATION_ID`; every connected
-agent must use a credential issued for that same organization. Multiple agent
-credentials can connect concurrently to the same endpoint.
+For a public MCP endpoint, deploy one MCP Web Service. The server resolves the
+organization from each globally unique agent credential and routes that request
+to the matching PostgreSQL tenant schema. Multiple organizations and multiple
+agents can share the same endpoint without sharing workspace state.
 
 Set these Render environment variables:
 
 - `DATABASE_URL`: the Cohort Supabase PostgreSQL connection string.
-- `COHORT_ORGANIZATION_ID`: the organization UUID whose workspace this endpoint serves.
+- `COHORT_ORGANIZATION_ID`: optional organization UUID restriction. Leave unset to let each credential select its own organization.
+- `COHORT_MCP_MAX_TENANTS`: optional in-memory tenant-service cache limit; defaults to `64`. Idle tenant services are evicted and restored from PostgreSQL when needed.
 - `COHORT_MCP_TRANSPORT`: `streamable-http`.
 - `COHORT_MCP_HOST`: `0.0.0.0`.
 - `COHORT_MCP_PORT`: Render's `PORT` value (or leave unset and pass `--port $PORT` in the start command).
@@ -92,10 +93,11 @@ the service root as the repository root and run the install command from there.
 
 Each HTTP request must include `Authorization: Bearer coh_...`. The middleware
 validates the credential against PostgreSQL on every request, including expiry
-and revocation, then binds the authenticated `agent_id` and scopes to that
-request's execution context. The optional `X-Organization-ID` header is accepted
-only when it matches the organization configured on the service. Never put an
-agent credential in a URL, query parameter, browser bundle, or public repository.
+and revocation, derives its organization, and binds the authenticated
+`organization_id`, `agent_id`, and scopes to that request's execution context.
+The optional `X-Organization-ID` header is accepted only when it matches the
+organization encoded by the credential. Never put an agent credential in a URL,
+query parameter, browser bundle, or public repository.
 
 For local stdio production use, continue setting `COHORT_MCP_AGENT_TOKEN` and
 optionally `COHORT_MCP_AGENT_ID`; stdio remains bound to that one credential
@@ -157,8 +159,8 @@ For coordination between multiple agents, use one shared Streamable HTTP server.
 ## Current scope and limitations
 
 - Local SQLite mode is intended for one server process on one machine.
-- Production PostgreSQL MCP serves one configured organization per service deployment. Separate organizations require separate MCP service deployments.
-- Multiple agents in that organization can use separate credentials and connect concurrently over authenticated Streamable HTTP.
+- Production PostgreSQL MCP supports multiple organizations on one service. Each organization is routed to its own PostgreSQL schema and cached independently; idle tenant services are evicted and rehydrated from PostgreSQL.
+- Each agent must use its own credential. Authentication, organization routing, agent identity, and scopes are resolved per HTTP request.
 - Stdio remains process-bound to one agent credential.
 - It is not a multi-region coordination service.
 - Local unauthenticated HTTP is for loopback development only.
