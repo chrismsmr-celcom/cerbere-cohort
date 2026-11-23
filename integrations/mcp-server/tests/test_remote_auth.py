@@ -62,11 +62,12 @@ def test_remote_mcp_rejects_missing_bearer_token():
 
 
 def test_remote_mcp_rejects_organization_header_mismatch(monkeypatch):
-    def should_not_authenticate(*args):
-        raise AssertionError("credential lookup must not run for a mismatched organization")
-
-    monkeypatch.setattr(mcp_server, "authenticate_agent_token", should_not_authenticate)
-    middleware = MCPAgentAuthMiddleware(lambda *args: None, "org-a")
+    monkeypatch.setattr(mcp_server, "authenticate_agent_token", lambda token, org: {
+        "organization_id": "org-a",
+        "agent_id": "agent-a",
+        "scopes": ["workspace:read"],
+    })
+    middleware = MCPAgentAuthMiddleware(lambda *args: None)
     messages, observed = asyncio.run(_invoke(
         middleware,
         [
@@ -178,3 +179,79 @@ def test_concurrent_requests_do_not_share_agent_identity(monkeypatch):
         return await asyncio.gather(invoke("agent-a"), invoke("agent-b"))
 
     assert asyncio.run(run()) == [200, 200]
+
+
+
+def test_tenant_router_isolates_services_by_authenticated_organization(monkeypatch):
+    created = []
+
+    class FakeService:
+        def __init__(self, organization_id, require_leases):
+            self.organization_id = organization_id
+            self.closed = False
+            created.append(self)
+
+        def get_state(self):
+            return {"organization_id": self.organization_id}
+
+        def close(self):
+            self.closed = True
+
+    monkeypatch.setattr(mcp_server, "CohortService", FakeService)
+    monkeypatch.setenv("COHORT_MCP_MAX_TENANTS", "2")
+    router = mcp_server.TenantServiceRouter("postgresql://unused")
+
+    first = _request_principal.set({"organization_id": "org-a", "agent_id": "a", "scopes": ["workspace:read"]})
+    try:
+        assert router.get_state()["organization_id"] == "org-a"
+    finally:
+        _request_principal.reset(first)
+
+    second = _request_principal.set({"organization_id": "org-b", "agent_id": "b", "scopes": ["workspace:read"]})
+    try:
+        assert router.get_state()["organization_id"] == "org-b"
+    finally:
+        _request_principal.reset(second)
+
+    first_again = _request_principal.set({"organization_id": "org-a", "agent_id": "a", "scopes": ["workspace:read"]})
+    try:
+        assert router.get_state()["organization_id"] == "org-a"
+    finally:
+        _request_principal.reset(first_again)
+
+    assert len(created) == 2
+    assert created[0] is not created[1]
+    router.close()
+    assert all(service.closed for service in created)
+
+
+def test_tenant_router_evicts_only_idle_tenant_services(monkeypatch):
+    created = []
+
+    class FakeService:
+        def __init__(self, organization_id, require_leases):
+            self.organization_id = organization_id
+            self.closed = False
+            created.append(self)
+
+        def get_state(self):
+            return {"organization_id": self.organization_id}
+
+        def close(self):
+            self.closed = True
+
+    monkeypatch.setattr(mcp_server, "CohortService", FakeService)
+    monkeypatch.setenv("COHORT_MCP_MAX_TENANTS", "1")
+    router = mcp_server.TenantServiceRouter("postgresql://unused")
+
+    for org_id in ("org-a", "org-b"):
+        token = _request_principal.set({"organization_id": org_id, "agent_id": "agent", "scopes": ["workspace:read"]})
+        try:
+            assert router.get_state()["organization_id"] == org_id
+        finally:
+            _request_principal.reset(token)
+
+    assert len(created) == 2
+    assert created[0].closed is True
+    assert created[1].closed is False
+    router.close()
