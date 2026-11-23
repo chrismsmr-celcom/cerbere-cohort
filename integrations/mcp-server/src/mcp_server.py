@@ -251,7 +251,9 @@ class CohortService:
         self.agent_scopes = set(scopes)
 
     def _require_scope(self, scope: str) -> None:
-        if self.agent_scopes is not None and scope not in self.agent_scopes:
+        principal = _request_principal.get()
+        scopes = set(principal["scopes"]) if principal is not None else self.agent_scopes
+        if scopes is not None and scope not in scopes:
             raise MCPAuthorizationError(
                 f'MCP agent credential lacks required scope: {scope}',
                 details={'required_scope': scope},
@@ -260,8 +262,12 @@ class CohortService:
     def _assert_agent(self, agent_id: str) -> None:
         if not isinstance(agent_id, str) or not agent_id.strip():
             raise ValueError('agent_id must not be empty')
-        if self.authenticated_agent_id and agent_id != self.authenticated_agent_id:
-            raise ValueError('agent_id does not match the identity bound to this MCP server')
+        principal = _request_principal.get()
+        authenticated_agent_id = (
+            principal["agent_id"] if principal is not None else self.authenticated_agent_id
+        )
+        if authenticated_agent_id and agent_id != authenticated_agent_id:
+            raise ValueError('agent_id does not match the identity bound to this MCP request')
 
     def _branch(self, agent_id: str, branch_name: str) -> Branch:
         self._assert_agent(agent_id)
@@ -374,8 +380,12 @@ class CohortService:
             raise ValueError("limit must be between 1 and 1000")
         with self._lock:
             events = self.workspace.get_events()
-            if self.authenticated_agent_id:
-                events = [event for event in events if event.agent_id == self.authenticated_agent_id]
+            principal = _request_principal.get()
+            authenticated_agent_id = (
+                principal["agent_id"] if principal is not None else self.authenticated_agent_id
+            )
+            if authenticated_agent_id:
+                events = [event for event in events if event.agent_id == authenticated_agent_id]
             events = events[-limit:]
             return [event.model_dump(mode="json") for event in events]
 
