@@ -49,7 +49,13 @@ export default function App() {
     } finally { setWorkspaceLoading(false); }
   }, [session]);
 
-  useEffect(() => { if (session) void loadWorkspaces(); else { setWorkspaces([]); setWorkspaceId(""); } }, [session, loadWorkspaces]);
+  useEffect(() => {
+    if (!session) { setWorkspaces([]); setWorkspaceId(""); return; }
+    // Do not fetch memberships until an incoming invitation has been accepted.
+    // Otherwise an older response can overwrite the newly joined workspace.
+    if (inviteToken) return;
+    void loadWorkspaces();
+  }, [session, inviteToken, loadWorkspaces]);
 
   useEffect(() => {
     if (!session || !inviteToken || inviteState !== "idle" || inviteAttempted.current) return;
@@ -66,9 +72,9 @@ export default function App() {
         const cleanUrl = new URL(window.location.href);
         cleanUrl.searchParams.delete("invite");
         window.history.replaceState({}, "", cleanUrl.pathname + cleanUrl.search + cleanUrl.hash);
+        // Clearing inviteToken triggers the workspace loader after acceptance.
         setInviteToken("");
         setInviteState("accepted");
-        await loadWorkspaces();
       } catch (error) {
         setInviteError(error instanceof Error ? error.message : "Unable to accept this invitation.");
         setInviteState("error");
