@@ -1353,6 +1353,38 @@ def delete_observability_export(
     return {"deleted": True}
 
 
+@app.get("/api/organizations/members")
+def list_organization_members(
+    context: dict[str, Any] = Depends(require_workspace_member),
+):
+    _require_admin(context)
+    try:
+        rows = _membership_connection.execute(
+            """SELECT m.user_id, m.role, m.status, m.created_at,
+                      u.email, p.full_name, p.job_title
+               FROM public.cohort_memberships m
+               LEFT JOIN auth.users u ON u.id = m.user_id
+               LEFT JOIN public.cohort_user_profiles p ON p.user_id = m.user_id
+               WHERE m.organization_id = ?
+               ORDER BY m.created_at ASC LIMIT 500""",
+            (context["organization_id"],),
+        ).fetchall()
+    except Exception as exc:
+        logger.exception("Unable to list organization members")
+        raise HTTPException(status_code=503, detail="Unable to list organization members") from exc
+    return {"items": [
+        {
+            "user_id": str(row["user_id"]),
+            "email": row["email"],
+            "full_name": row["full_name"],
+            "job_title": row["job_title"],
+            "role": row["role"],
+            "status": row["status"],
+            "created_at": row["created_at"],
+        } for row in rows
+    ]}
+
+
 @app.post("/api/organizations/invitations", status_code=201)
 def create_organization_invitation(
     body: InvitationCreate,
