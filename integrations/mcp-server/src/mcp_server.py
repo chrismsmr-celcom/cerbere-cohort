@@ -69,7 +69,7 @@ _request_principal: contextvars.ContextVar[dict[str, Any] | None] = contextvars.
 class MCPAgentAuthMiddleware:
     """Authenticate every remote MCP HTTP request with its own agent credential."""
 
-    def __init__(self, app, organization_id: str):
+    def __init__(self, app, organization_id: str | None = None):
         self.app = app
         self.organization_id = organization_id
 
@@ -104,18 +104,17 @@ class MCPAgentAuthMiddleware:
             return
 
         supplied_org = headers.get(b"x-organization-id")
-        if supplied_org:
-            try:
-                supplied_org_text = supplied_org.decode("ascii").strip()
-            except UnicodeDecodeError:
-                await self._reject(send, 400, "Invalid X-Organization-ID header")
-                return
-            if supplied_org_text.lower() != self.organization_id.lower():
-                await self._reject(send, 403, "Credential is not valid for this organization")
-                return
+        try:
+            supplied_org_text = supplied_org.decode("ascii").strip() if supplied_org else None
+        except UnicodeDecodeError:
+            await self._reject(send, 400, "Invalid X-Organization-ID header")
+            return
 
         try:
             principal = authenticate_agent_token(agent_token, self.organization_id)
+            if supplied_org_text and supplied_org_text.lower() != principal["organization_id"].lower():
+                await self._reject(send, 403, "Credential is not valid for this organization")
+                return
         except Exception as exc:  # fail closed at the transport boundary
             status = getattr(exc, "status_code", 503)
             if status not in {400, 401, 403, 503}:
