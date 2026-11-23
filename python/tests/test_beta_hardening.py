@@ -323,3 +323,59 @@ def test_readiness_rejects_a_disabled_signup_trigger(monkeypatch):
             return (False,)
 
     assert api._onboarding_trigger_ready(DisabledTriggerDatabase()) is False
+
+
+def test_invitation_database_uses_public_connection_without_workspace_context(monkeypatch):
+    from fastapi import HTTPException
+    from cerbere_cohort import api
+
+    public_connection = object()
+    monkeypatch.setattr(api, "DATABASE_URL", "postgresql://example")
+    monkeypatch.setattr(api, "_membership_connection", public_connection)
+    assert api._invitation_db() is public_connection
+
+
+def test_invitation_acceptance_does_not_require_an_active_workspace(monkeypatch):
+    from cerbere_cohort import api
+
+    class Cursor:
+        def fetchone(self):
+            return {
+                "organization_id": "22222222-2222-4222-8222-222222222222",
+                "role": "member",
+            }
+
+    class PublicDatabase:
+        def __init__(self):
+            self.sql = ""
+            self.params = ()
+            self.committed = False
+
+        def execute(self, sql, params=()):
+            self.sql = sql
+            self.params = params
+            return Cursor()
+
+        def commit(self):
+            self.committed = True
+
+    db = PublicDatabase()
+    monkeypatch.setattr(api, "_decode_access_token", lambda token: {
+        "sub": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "email": "tester@example.com",
+    })
+    monkeypatch.setattr(api, "_invitation_db", lambda: db)
+
+    result = api.accept_organization_invitation(
+        api.InvitationAccept(token="x" * 40),
+        authorization="Bearer verified-supabase-token",
+    )
+
+    assert result == {
+        "accepted": True,
+        "organization_id": "22222222-2222-4222-8222-222222222222",
+        "role": "member",
+    }
+    assert "UPDATE public.cohort_invitations" in db.sql
+    assert "INSERT INTO public.cohort_memberships" in db.sql
+    assert db.committed is True
