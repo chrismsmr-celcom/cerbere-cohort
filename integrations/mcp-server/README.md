@@ -82,14 +82,16 @@ Use this service configuration:
 
 | Setting | Value |
 | --- | --- |
-| Root directory | `integrations/mcp-server` |
-| Build command | `pip install -e "../../python[postgres]" -e .` |
+| Root directory | Leave blank (repository root) |
+| Build command | `pip install -e "./python[postgres]" -e "./integrations/mcp-server"` |
 | Start command | `cerbere-cohort-mcp --transport streamable-http --host 0.0.0.0 --port $PORT` |
 
-The build command above assumes Render checks out the repository root and then
-uses `integrations/mcp-server` as the service root. If Render runs commands
-relative to the service root only, use a root-level build script or configure
-the service root as the repository root and run the install command from there.
+Keep the root directory at the repository root because the MCP server depends
+on the shared Python package in `python/`. A Render root directory excludes
+files outside that directory at build time and runtime. The MCP service is still
+an independent Render deployment; leaving the root directory blank does not
+deploy or start the other applications in the repository. It only makes the
+shared package available to this service.
 
 Each HTTP request must include `Authorization: Bearer coh_...`. The middleware
 validates the credential against PostgreSQL on every request, including expiry
