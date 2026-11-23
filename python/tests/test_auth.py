@@ -262,3 +262,38 @@ def test_workspace_member_can_manage_any_agent_resource():
     member = {"user_id": "user-1", "role": "member"}
     assert _agent_owns(member, "worker-b") is True
     assert _require_agent_identity(member, "worker-b") is None
+
+
+
+def test_agent_credential_authentication_can_resolve_tenant_from_unique_token(monkeypatch):
+    import cerbere_cohort.auth as auth
+
+    class CredentialDB:
+        def __init__(self):
+            self.calls = []
+            self.committed = False
+
+        def execute(self, sql, params):
+            self.calls.append((sql, params))
+            return _FakeCursor({
+                "id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+                "organization_id": "22222222-2222-4222-8222-222222222222",
+                "agent_id": "remote-agent",
+                "scopes": ["workspace:read", "workspace:write"],
+            })
+
+        def commit(self):
+            self.committed = True
+
+    db = CredentialDB()
+    monkeypatch.setattr(auth, "_membership_db", db)
+
+    result = auth.authenticate_agent_token("coh_global-lookup")
+
+    assert result["organization_id"] == "22222222-2222-4222-8222-222222222222"
+    assert result["agent_id"] == "remote-agent"
+    assert len(db.calls) == 1
+    assert "WHERE token_hash = ?" in db.calls[0][0]
+    assert "organization_id = ?" not in db.calls[0][0]
+    assert len(db.calls[0][1]) == 1
+    assert db.committed is True

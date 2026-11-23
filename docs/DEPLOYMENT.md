@@ -94,7 +94,8 @@ The readiness endpoint verifies database connectivity, required application tabl
 
 - One API process/instance only. Do not horizontally scale until the tenant runtime and branch registry are moved behind a shared coordination boundary.
 - Multiple organizations are schema-isolated in PostgreSQL, but process-local caches still require a single API instance.
-- MCP has a separate branch registry and is not a remote authenticated multi-user service. Do not run MCP and REST writers concurrently against the same workspace.
+- Remote MCP Streamable HTTP authenticates every agent request and routes it to the organization schema identified by its globally unique agent credential. It can serve multiple organizations on one MCP service instance.
+- MCP maintains its own process-local branch registry. Keep the MCP service at one instance and one worker; do not run MCP and REST writers concurrently against the same workspace until their runtime caches share a coordination boundary.
 - Agent credentials are bound to an agent identity and events distinguish the authenticated actor from the target agent. This is not external-tool authorization or sandboxing.
 - Free Render hosting can sleep when idle.
 

@@ -157,29 +157,45 @@ AGENT_SCOPES = frozenset({
 })
 
 
-def authenticate_agent_token(token: str, organization_id: str) -> dict[str, Any]:
-    """Resolve an agent credential, enforcing organization, expiry and revocation."""
+def authenticate_agent_token(token: str, organization_id: str | None = None) -> dict[str, Any]:
+    """Resolve an agent credential, optionally constraining it to one organization."""
     import hashlib
 
     if not token or len(token) > 256 or not token.startswith("coh_"):
         raise HTTPException(status_code=401, detail="Invalid agent credential")
-    try:
-        org_id = str(UUID(organization_id))
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail="Invalid organization ID") from exc
     if _membership_db is None:
         raise HTTPException(status_code=503, detail="Credential database is unavailable")
+
+    org_id = None
+    if organization_id is not None:
+        try:
+            org_id = str(UUID(organization_id))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Invalid organization ID") from exc
+
     token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
     try:
-        row = _membership_db.execute(
-            """UPDATE public.cohort_agent_credentials
-               SET last_used_at = now()
-               WHERE token_hash = ? AND organization_id = ?
-                 AND revoked_at IS NULL
-                 AND (expires_at IS NULL OR expires_at > now())
-               RETURNING id, organization_id, agent_id, scopes""",
-            (token_hash, org_id),
-        ).fetchone()
+        if org_id is None:
+            # token_hash is globally UNIQUE, so it resolves exactly one tenant.
+            row = _membership_db.execute(
+                """UPDATE public.cohort_agent_credentials
+                   SET last_used_at = now()
+                   WHERE token_hash = ?
+                     AND revoked_at IS NULL
+                     AND (expires_at IS NULL OR expires_at > now())
+                   RETURNING id, organization_id, agent_id, scopes""",
+                (token_hash,),
+            ).fetchone()
+        else:
+            row = _membership_db.execute(
+                """UPDATE public.cohort_agent_credentials
+                   SET last_used_at = now()
+                   WHERE token_hash = ? AND organization_id = ?
+                     AND revoked_at IS NULL
+                     AND (expires_at IS NULL OR expires_at > now())
+                   RETURNING id, organization_id, agent_id, scopes""",
+                (token_hash, org_id),
+            ).fetchone()
         _membership_db.commit()
     except Exception as exc:
         raise HTTPException(status_code=503, detail="Unable to verify agent credential") from exc
@@ -193,7 +209,6 @@ def authenticate_agent_token(token: str, organization_id: str) -> dict[str, Any]
         "agent_id": row["agent_id"] if isinstance(row, dict) else row[2],
         "scopes": scopes,
     }
-
 
 def require_workspace_scope(required_scope: str):
     """Build a dependency accepting either a Supabase member or scoped agent token."""

@@ -6,11 +6,13 @@ database-backed workspace. Bind to loopback unless an authenticated proxy is use
 from __future__ import annotations
 
 import argparse
+import contextvars
 import functools
 import json
 import os
 import math
 import threading
+from collections import OrderedDict
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +22,7 @@ from mcp.server.fastmcp.exceptions import ToolError
 from cerbere_cohort.errors import CerbereError
 from cerbere_cohort.auth import authenticate_agent_token, configure_membership_db
 from cerbere_cohort.persistence import PersistentWorkspace
+from cerbere_cohort.postgres import _Connection as PostgresConnection
 from cerbere_cohort.postgres import PostgresPersistentWorkspace
 from cerbere_cohort.workspace import Branch
 
@@ -58,6 +61,76 @@ def structured_tool_errors(fn):
 
 class MCPAuthorizationError(CerbereError):
     code = 'insufficient_scope'
+
+
+_request_principal: contextvars.ContextVar[dict[str, Any] | None] = contextvars.ContextVar(
+    "cohort_mcp_request_principal", default=None
+)
+
+
+class MCPAgentAuthMiddleware:
+    """Authenticate every remote MCP HTTP request with its own agent credential."""
+
+    def __init__(self, app, organization_id: str | None = None):
+        self.app = app
+        self.organization_id = organization_id
+
+    @staticmethod
+    async def _reject(send, status: int, message: str) -> None:
+        body = json.dumps({"error": message}).encode("utf-8")
+        await send({
+            "type": "http.response.start",
+            "status": status,
+            "headers": [
+                (b"content-type", b"application/json"),
+                (b"content-length", str(len(body)).encode("ascii")),
+                (b"cache-control", b"no-store"),
+            ],
+        })
+        await send({"type": "http.response.body", "body": body})
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") != "http":
+            await self.app(scope, receive, send)
+            return
+
+        headers = {key.lower(): value for key, value in scope.get("headers", [])}
+        authorization = headers.get(b"authorization", b"").decode("latin-1").strip()
+        if not authorization.startswith("Bearer "):
+            await self._reject(send, 401, "Bearer agent credential required")
+            return
+
+        agent_token = authorization[7:].strip()
+        if not agent_token:
+            await self._reject(send, 401, "Bearer agent credential required")
+            return
+
+        supplied_org = headers.get(b"x-organization-id")
+        try:
+            supplied_org_text = supplied_org.decode("ascii").strip() if supplied_org else None
+        except UnicodeDecodeError:
+            await self._reject(send, 400, "Invalid X-Organization-ID header")
+            return
+
+        try:
+            principal = authenticate_agent_token(agent_token, self.organization_id)
+            if supplied_org_text and supplied_org_text.lower() != principal["organization_id"].lower():
+                await self._reject(send, 403, "Credential is not valid for this organization")
+                return
+        except Exception as exc:  # fail closed at the transport boundary
+            status = getattr(exc, "status_code", 503)
+            if status not in {400, 401, 403, 503}:
+                status = 503
+            detail = getattr(exc, "detail", None)
+            message = detail if isinstance(detail, str) else "Unable to authenticate agent credential"
+            await self._reject(send, status, message)
+            return
+
+        request_token = _request_principal.set(principal)
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            _request_principal.reset(request_token)
 
 
 class CohortService:
@@ -179,7 +252,9 @@ class CohortService:
         self.agent_scopes = set(scopes)
 
     def _require_scope(self, scope: str) -> None:
-        if self.agent_scopes is not None and scope not in self.agent_scopes:
+        principal = _request_principal.get()
+        scopes = set(principal["scopes"]) if principal is not None else self.agent_scopes
+        if scopes is not None and scope not in scopes:
             raise MCPAuthorizationError(
                 f'MCP agent credential lacks required scope: {scope}',
                 details={'required_scope': scope},
@@ -188,8 +263,12 @@ class CohortService:
     def _assert_agent(self, agent_id: str) -> None:
         if not isinstance(agent_id, str) or not agent_id.strip():
             raise ValueError('agent_id must not be empty')
-        if self.authenticated_agent_id and agent_id != self.authenticated_agent_id:
-            raise ValueError('agent_id does not match the identity bound to this MCP server')
+        principal = _request_principal.get()
+        authenticated_agent_id = (
+            principal["agent_id"] if principal is not None else self.authenticated_agent_id
+        )
+        if authenticated_agent_id and agent_id != authenticated_agent_id:
+            raise ValueError('agent_id does not match the identity bound to this MCP request')
 
     def _branch(self, agent_id: str, branch_name: str) -> Branch:
         self._assert_agent(agent_id)
@@ -302,8 +381,12 @@ class CohortService:
             raise ValueError("limit must be between 1 and 1000")
         with self._lock:
             events = self.workspace.get_events()
-            if self.authenticated_agent_id:
-                events = [event for event in events if event.agent_id == self.authenticated_agent_id]
+            principal = _request_principal.get()
+            authenticated_agent_id = (
+                principal["agent_id"] if principal is not None else self.authenticated_agent_id
+            )
+            if authenticated_agent_id:
+                events = [event for event in events if event.agent_id == authenticated_agent_id]
             events = events[-limit:]
             return [event.model_dump(mode="json") for event in events]
 
@@ -317,6 +400,76 @@ class CohortService:
     def close(self) -> None:
         with self._lock:
             self.workspace.close()
+
+
+class TenantServiceRouter:
+    """Route each authenticated MCP request to its organization schema."""
+
+    def __init__(self, database_url: str):
+        self.database_url = database_url
+        self.max_tenants = int(os.getenv("COHORT_MCP_MAX_TENANTS", "64"))
+        if self.max_tenants < 1:
+            raise RuntimeError("COHORT_MCP_MAX_TENANTS must be at least 1")
+        self._services: OrderedDict[str, dict[str, Any]] = OrderedDict()
+        self._lock = threading.RLock()
+
+    def _acquire(self) -> tuple[str, CohortService]:
+        principal = _request_principal.get()
+        if principal is None:
+            raise MCPAuthorizationError("Authenticated MCP request context is missing")
+        organization_id = str(principal.get("organization_id") or "").strip()
+        if not organization_id:
+            raise MCPAuthorizationError("Authenticated credential has no organization")
+
+        with self._lock:
+            entry = self._services.get(organization_id)
+            if entry is not None:
+                entry["active"] += 1
+                self._services.move_to_end(organization_id)
+                return organization_id, entry["service"]
+
+            if len(self._services) >= self.max_tenants:
+                evicted = False
+                for tenant_id, candidate in list(self._services.items()):
+                    if candidate["active"] == 0:
+                        candidate["service"].close()
+                        del self._services[tenant_id]
+                        evicted = True
+                        break
+                if not evicted:
+                    raise RuntimeError("MCP tenant capacity is temporarily exhausted")
+
+            service = CohortService(
+                organization_id=organization_id,
+                require_leases=True,
+            )
+            self._services[organization_id] = {"service": service, "active": 1}
+            return organization_id, service
+
+    def _release(self, organization_id: str) -> None:
+        with self._lock:
+            entry = self._services.get(organization_id)
+            if entry is not None:
+                entry["active"] = max(0, entry["active"] - 1)
+
+    def _call(self, method_name: str, *args, **kwargs):
+        organization_id, service = self._acquire()
+        try:
+            method = getattr(service, method_name)
+            return method(*args, **kwargs)
+        finally:
+            self._release(organization_id)
+
+    def __getattr__(self, method_name: str):
+        if method_name.startswith("_"):
+            raise AttributeError(method_name)
+        return lambda *args, **kwargs: self._call(method_name, *args, **kwargs)
+
+    def close(self) -> None:
+        with self._lock:
+            for entry in self._services.values():
+                entry["service"].close()
+            self._services.clear()
 
 
 def create_server(service: CohortService, host: str = "127.0.0.1", port: int = 8765) -> FastMCP:
@@ -403,35 +556,70 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=int(os.getenv("COHORT_MCP_PORT", "8765")))
     args = parser.parse_args()
 
-    if os.getenv("DATABASE_URL") and args.transport != "stdio":
-        raise RuntimeError(
-            "Authenticated remote MCP transport is not enabled yet. "
-            "Use stdio; do not expose the shared production workspace over unauthenticated HTTP."
-        )
     database_url = os.getenv('DATABASE_URL', '').strip()
     agent_token = os.getenv('COHORT_MCP_AGENT_TOKEN', '').strip()
-    if database_url and not agent_token:
-        raise RuntimeError('COHORT_MCP_AGENT_TOKEN is required for production MCP authentication')
     organization_id = os.getenv('COHORT_ORGANIZATION_ID', '').strip() or None
-    if database_url and not organization_id:
-        raise RuntimeError('COHORT_ORGANIZATION_ID is required for production MCP schema isolation')
-    service = CohortService(
-        args.db,
-        organization_id=organization_id,
-        require_leases=True if database_url else None,
-    )
+
+    if not database_url and args.transport != "stdio" and args.host not in {"127.0.0.1", "localhost", "::1"}:
+        raise RuntimeError(
+            "Unauthenticated SQLite MCP HTTP is restricted to loopback. "
+            "Configure DATABASE_URL for authenticated remote access."
+        )
+
     if database_url:
-        configure_membership_db(service._db)
-        principal = authenticate_agent_token(agent_token, organization_id)
-        expected_agent_id = os.getenv('COHORT_MCP_AGENT_ID', '').strip()
-        if expected_agent_id and expected_agent_id != principal['agent_id']:
-            raise RuntimeError('COHORT_MCP_AGENT_ID does not match the supplied agent credential')
-        service.bind_agent_identity(principal['agent_id'], principal['scopes'])
+        # Credential hashes are globally unique; resolve the organization from
+        # the token, then route the request to that organization's schema.
+        auth_db = PostgresConnection(database_url, schema="public")
+        configure_membership_db(auth_db)
+
+        if args.transport == "stdio":
+            if not organization_id:
+                raise RuntimeError('COHORT_ORGANIZATION_ID is required for production stdio MCP')
+            if not agent_token:
+                raise RuntimeError('COHORT_MCP_AGENT_TOKEN is required for production stdio authentication')
+            service = CohortService(
+                args.db,
+                organization_id=organization_id,
+                require_leases=True,
+            )
+            try:
+                principal = authenticate_agent_token(agent_token, organization_id)
+                expected_agent_id = os.getenv('COHORT_MCP_AGENT_ID', '').strip()
+                if expected_agent_id and expected_agent_id != principal['agent_id']:
+                    raise RuntimeError('COHORT_MCP_AGENT_ID does not match the supplied agent credential')
+                service.bind_agent_identity(principal['agent_id'], principal['scopes'])
+                mcp = create_server(service, host=args.host, port=args.port)
+                mcp.run(transport="stdio")
+            finally:
+                service.close()
+                auth_db.close()
+            return
+
+        service = TenantServiceRouter(database_url)
+        mcp = create_server(service, host=args.host, port=args.port)
+        import uvicorn
+
+        app = MCPAgentAuthMiddleware(
+            mcp.streamable_http_app(),
+            organization_id=organization_id,
+        )
+        try:
+            uvicorn.run(app, host=args.host, port=args.port, log_level="info")
+        finally:
+            service.close()
+            auth_db.close()
+        return
+
+    service = CohortService(args.db)
     mcp = create_server(service, host=args.host, port=args.port)
-    if args.transport == "stdio":
-        mcp.run(transport="stdio")
-    else:
-        mcp.run(transport="streamable-http")
+    try:
+        if args.transport == "stdio":
+            mcp.run(transport="stdio")
+        else:
+            # Local-only development transport; never bind unauthenticated mode publicly.
+            mcp.run(transport="streamable-http")
+    finally:
+        service.close()
 
 
 if __name__ == "__main__":
