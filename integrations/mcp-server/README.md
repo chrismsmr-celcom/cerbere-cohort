@@ -46,6 +46,9 @@ http://127.0.0.1:8765/mcp
 The default database is `~/.cerbere-cohort/workspace.db`. Configure it with
 `COHORT_DB_PATH` or `--db`.
 
+Unauthenticated SQLite HTTP is restricted to loopback. Do not bind it to
+`0.0.0.0` or expose it through a public reverse proxy.
+
 Useful options:
 
 ```bash
@@ -59,14 +62,53 @@ syntax varies; use its Streamable HTTP MCP transport and the URL above.
 
 **Security boundary:** local Streamable HTTP remains unauthenticated and must stay on loopback. Do not expose it to a LAN, public interface, or the internet.
 
-For production PostgreSQL deployments, run one stdio server process per agent and set these environment variables:
+## Remote Streamable HTTP on Render
 
-- `DATABASE_URL`: PostgreSQL connection string.
-- `COHORT_ORGANIZATION_ID`: organization UUID; the MCP branch registry is stored in that organization's schema.
-- `COHORT_MCP_AGENT_TOKEN`: agent credential created by the Cohort organization; its registered `agent_id` and scopes are loaded from PostgreSQL.
-- `COHORT_MCP_AGENT_ID` (optional): expected identity assertion; startup fails if it differs from the credential's registered agent.
+For a public MCP endpoint, deploy one MCP Web Service for one Cohort organization.
+The PostgreSQL schema is selected by `COHORT_ORGANIZATION_ID`; every connected
+agent must use a credential issued for that same organization. Multiple agent
+credentials can connect concurrently to the same endpoint.
 
-Production MCP mode authenticates the agent token, enforces its `workspace:read`, `workspace:write`, and `leases:write` scopes per tool, binds the process to the credential's registered agent identity, and enables lease enforcement. Each branch write must hold a lease for the key being changed. `lease_acquire` returns a monotonically increasing `fencing_token`; same-owner renewal extends expiry without changing the token, while takeover after expiry receives a higher token. Commits reject expired or superseded tokens. Event reads are filtered to the bound agent. `workspace_get_state` intentionally exposes the shared committed state to the connected agent because that is Cohort's coordination model.
+Set these Render environment variables:
+
+- `DATABASE_URL`: the Cohort Supabase PostgreSQL connection string.
+- `COHORT_ORGANIZATION_ID`: the organization UUID whose workspace this endpoint serves.
+- `COHORT_MCP_TRANSPORT`: `streamable-http`.
+- `COHORT_MCP_HOST`: `0.0.0.0`.
+- `COHORT_MCP_PORT`: Render's `PORT` value (or leave unset and pass `--port $PORT` in the start command).
+
+Use this service configuration:
+
+| Setting | Value |
+| --- | --- |
+| Root directory | `integrations/mcp-server` |
+| Build command | `pip install -e "../../python[postgres]" -e .` |
+| Start command | `cerbere-cohort-mcp --transport streamable-http --host 0.0.0.0 --port $PORT` |
+
+The build command above assumes Render checks out the repository root and then
+uses `integrations/mcp-server` as the service root. If Render runs commands
+relative to the service root only, use a root-level build script or configure
+the service root as the repository root and run the install command from there.
+
+Each HTTP request must include `Authorization: Bearer coh_...`. The middleware
+validates the credential against PostgreSQL on every request, including expiry
+and revocation, then binds the authenticated `agent_id` and scopes to that
+request's execution context. The optional `X-Organization-ID` header is accepted
+only when it matches the organization configured on the service. Never put an
+agent credential in a URL, query parameter, browser bundle, or public repository.
+
+For local stdio production use, continue setting `COHORT_MCP_AGENT_TOKEN` and
+optionally `COHORT_MCP_AGENT_ID`; stdio remains bound to that one credential
+for the lifetime of its process.
+
+The server enforces `workspace:read`, `workspace:write`, and
+`leases:write` scopes per tool. Each branch write must hold a lease for the
+key being changed. `lease_acquire` returns a monotonically increasing
+`fencing_token`; same-owner renewal extends expiry without changing the token,
+while takeover after expiry receives a higher token. Commits reject expired or
+superseded tokens. Event reads are filtered to the authenticated agent.
+`workspace_get_state` intentionally exposes the shared committed state within
+the configured organization.
 
 ## MCP tools
 
@@ -115,6 +157,8 @@ For coordination between multiple agents, use one shared Streamable HTTP server.
 ## Current scope and limitations
 
 - Local SQLite mode is intended for one server process on one machine.
-- Production PostgreSQL mode supports separate stdio server processes per agent, sharing the same organization schema; database transactions and fencing tokens coordinate their writes.
+- Production PostgreSQL MCP serves one configured organization per service deployment. Separate organizations require separate MCP service deployments.
+- Multiple agents in that organization can use separate credentials and connect concurrently over authenticated Streamable HTTP.
+- Stdio remains process-bound to one agent credential.
 - It is not a multi-region coordination service.
-- Local unauthenticated HTTP is for loopback development only. Production MCP identity is process-bound; remote authenticated HTTP transport is not enabled yet.
+- Local unauthenticated HTTP is for loopback development only.
