@@ -489,3 +489,111 @@ tr:hover .cell-actions,tr:focus-within .cell-actions{opacity:1}
     grid-column: span 12;
   }
 }
+
+
+/* Settings information architecture: retain the primary app sidebar and add
+   a compact, sticky section navigator within the settings workspace. */
+.settings-page {
+  width: 100%;
+  max-width: none;
+  padding: 24px clamp(18px, 3vw, 48px) 48px;
+}
+.settings-page > .page-head {
+  width: 100%;
+  max-width: 1240px;
+  margin: 0 auto 22px;
+}
+.settings-layout {
+  display: grid;
+  grid-template-columns: 190px minmax(0, 1fr);
+  align-items: start;
+  gap: 22px;
+  width: 100%;
+  max-width: 1240px;
+  margin: 0 auto;
+}
+.settings-nav {
+  position: sticky;
+  top: 82px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 9px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-card);
+  background: var(--card);
+}
+.settings-nav-label {
+  padding: 7px 10px 9px;
+  color: var(--faint);
+  font: 700 10px var(--data);
+  letter-spacing: .1em;
+}
+.settings-nav a {
+  display: block;
+  padding: 8px 10px;
+  border-radius: var(--r-ctl);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 550;
+  line-height: 1.35;
+  text-decoration: none;
+  transition: background 120ms, color 120ms;
+}
+.settings-nav a:hover,
+.settings-nav a:focus-visible {
+  background: var(--hover);
+  color: var(--ink);
+  outline: none;
+}
+.settings-nav a[href="#settings-observability"] { overflow-wrap: anywhere; }
+.settings-main { min-width: 0; }
+.settings-main > .grid { gap: 15px; }
+.settings-main .card { min-width: 0; scroll-margin-top: 88px; }
+.settings-main .card-h { padding: 16px 20px 10px; }
+.settings-main .card-h h2 { font-size: 14px; }
+.settings-main .card-h p,
+.settings-main .card-b,
+.settings-main .field,
+.settings-main .notice,
+.settings-main .muted { font-size: 12px; }
+.settings-main .card-b { line-height: 1.55; }
+.settings-main .field input,
+.settings-main .field select { font-size: 12px; }
+.settings-main .kv { padding: 9px 18px; font-size: 12px; }
+.settings-main .settings-observability {
+  width: min(100%, 900px);
+  grid-column: 1 / -1;
+  justify-self: center;
+  margin: 4px auto;
+}
+.settings-main .settings-observability .card-h { text-align: center; }
+.settings-main .settings-observability .card-h > div { width: 100%; }
+.settings-main .settings-observability .card-b { padding: 18px 24px 22px; }
+.settings-main .observability-heading { align-items: center; }
+.settings-main .observability-copy { text-align: center; }
+.settings-main .observability-copy .muted { margin-left: auto; margin-right: auto; max-width: 620px; }
+.settings-main .observability-form { width: min(100%, 680px); margin: 0 auto; }
+.settings-main .observability-form > .row { justify-content: center; }
+.settings-main .settings-observability .notice { max-width: 680px; margin-left: auto; margin-right: auto; }
+.settings-main .card:target { scroll-margin-top: 88px; }
+@media (max-width: 900px) {
+  .settings-layout { grid-template-columns: 160px minmax(0, 1fr); gap: 14px; }
+  .settings-nav { padding: 8px 6px; }
+  .settings-nav a { padding: 8px; }
+}
+@media (max-width: 680px) {
+  .settings-page { padding: 16px 12px 32px; }
+  .settings-layout { grid-template-columns: minmax(0, 1fr); }
+  .settings-nav {
+    position: static;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 3px;
+    padding: 8px;
+  }
+  .settings-nav-label { grid-column: 1 / -1; }
+  .settings-nav a { font-size: 11px; }
+  .settings-main .settings-observability { width: 100%; }
+  .settings-main .settings-observability .card-b { padding: 14px; }
+}
