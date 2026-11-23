@@ -12,6 +12,7 @@ import json
 import os
 import math
 import threading
+from collections import OrderedDict
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +22,7 @@ from mcp.server.fastmcp.exceptions import ToolError
 from cerbere_cohort.errors import CerbereError
 from cerbere_cohort.auth import authenticate_agent_token, configure_membership_db
 from cerbere_cohort.persistence import PersistentWorkspace
+from cerbere_cohort.postgres import _Connection as PostgresConnection
 from cerbere_cohort.postgres import PostgresPersistentWorkspace
 from cerbere_cohort.workspace import Branch
 
@@ -398,6 +400,76 @@ class CohortService:
     def close(self) -> None:
         with self._lock:
             self.workspace.close()
+
+
+class TenantServiceRouter:
+    """Route each authenticated MCP request to its organization schema."""
+
+    def __init__(self, database_url: str):
+        self.database_url = database_url
+        self.max_tenants = int(os.getenv("COHORT_MCP_MAX_TENANTS", "64"))
+        if self.max_tenants < 1:
+            raise RuntimeError("COHORT_MCP_MAX_TENANTS must be at least 1")
+        self._services: OrderedDict[str, dict[str, Any]] = OrderedDict()
+        self._lock = threading.RLock()
+
+    def _acquire(self) -> tuple[str, CohortService]:
+        principal = _request_principal.get()
+        if principal is None:
+            raise MCPAuthorizationError("Authenticated MCP request context is missing")
+        organization_id = str(principal.get("organization_id") or "").strip()
+        if not organization_id:
+            raise MCPAuthorizationError("Authenticated credential has no organization")
+
+        with self._lock:
+            entry = self._services.get(organization_id)
+            if entry is not None:
+                entry["active"] += 1
+                self._services.move_to_end(organization_id)
+                return organization_id, entry["service"]
+
+            if len(self._services) >= self.max_tenants:
+                evicted = False
+                for tenant_id, candidate in list(self._services.items()):
+                    if candidate["active"] == 0:
+                        candidate["service"].close()
+                        del self._services[tenant_id]
+                        evicted = True
+                        break
+                if not evicted:
+                    raise RuntimeError("MCP tenant capacity is temporarily exhausted")
+
+            service = CohortService(
+                organization_id=organization_id,
+                require_leases=True,
+            )
+            self._services[organization_id] = {"service": service, "active": 1}
+            return organization_id, service
+
+    def _release(self, organization_id: str) -> None:
+        with self._lock:
+            entry = self._services.get(organization_id)
+            if entry is not None:
+                entry["active"] = max(0, entry["active"] - 1)
+
+    def _call(self, method_name: str, *args, **kwargs):
+        organization_id, service = self._acquire()
+        try:
+            method = getattr(service, method_name)
+            return method(*args, **kwargs)
+        finally:
+            self._release(organization_id)
+
+    def __getattr__(self, method_name: str):
+        if method_name.startswith("_"):
+            raise AttributeError(method_name)
+        return lambda *args, **kwargs: self._call(method_name, *args, **kwargs)
+
+    def close(self) -> None:
+        with self._lock:
+            for entry in self._services.values():
+                entry["service"].close()
+            self._services.clear()
 
 
 def create_server(service: CohortService, host: str = "127.0.0.1", port: int = 8765) -> FastMCP:
