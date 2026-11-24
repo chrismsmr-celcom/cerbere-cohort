@@ -43,6 +43,8 @@ def test_expired_lease_reassignment_fences_old_agent_after_restart(tmp_path):
 
     time.sleep(1.05)
     second = PersistentWorkspace(db)
+    stale_client = PersistentWorkspace(db)
+    coordinator_a = TaskCoordinator(stale_client._conn)
     coordinator_b = TaskCoordinator(second._conn)
     owner_b = coordinator_b.claim(task["task_id"], "agent-b", lease_seconds=30)
     assert owner_b["fencing_token"] == owner_a["fencing_token"] + 1
@@ -61,6 +63,7 @@ def test_expired_lease_reassignment_fences_old_agent_after_restart(tmp_path):
     )
     assert final["result"] == {"report": "published"}
     second.close()
+    stale_client.close()
 
 
 def test_independent_sqlite_clients_cannot_claim_the_same_task(tmp_path):
