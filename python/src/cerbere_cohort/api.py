@@ -1122,37 +1122,39 @@ def create_branch(body: BranchCreate, context: dict[str, Any] = Depends(require_
     branch_id = str(uuid.uuid4())
     try:
         with _lock:
-            with event_actor(context):
-                branch = workspace.create_branch(body.agent_id, body.name)
+            def create_and_persist():
+                with event_actor(context):
+                    branch = workspace._workspace.create_branch(body.agent_id, body.name)
+                item = {
+                    "branch": branch, "agent_id": body.agent_id, "status": "open",
+                    "conflicting_keys": [],
+                    "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                }
+                _branches[branch_id] = item
+                _save_api_branch(branch_id, item, commit=False)
+                return _branch_summary(branch_id, item)
+            return workspace._mutate(create_and_persist)
     except Exception as exc:
         raise HTTPException(400, str(exc)) from exc
-    with _lock:
-        _branches[branch_id] = {
-            "branch": branch,
-            "agent_id": body.agent_id,
-            "status": "open",
-            "conflicting_keys": [],
-            "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-        }
-        _save_api_branch(branch_id, _branches[branch_id])
-    return _branch_summary(branch_id, _branches[branch_id])
 
 
 @app.put("/api/branches/{branch_id}/state")
 def write_branch(branch_id: str, body: BranchWrite, context: dict[str, Any] = Depends(require_workspace_write_access)):
-    with _lock:
+    def write_and_persist():
+        _restore_api_branches(clear=True, commit=False)
         item = _branches.get(branch_id)
         if not item or item["status"] != "open" or not _agent_owns(context, item["agent_id"]):
             raise HTTPException(404, "Open branch not found")
         try:
-            # PersistentWorkspace replays its runtime after lease mutations.
-            # Rebind the branch so writes validate against the current lease manager.
             item["branch"]._lease_manager = workspace._workspace._lease_manager
             item["branch"].set(body.key, body.value, intent=body.intent)
-            _save_api_branch(branch_id, item)
+            _save_api_branch(branch_id, item, commit=False)
         except (LeaseError, ValueError) as exc:
             raise HTTPException(409, detail={"message": str(exc), "code": getattr(exc, "code", "write_error")}) from exc
-    return {"ok": True, "branch_id": branch_id, "key": body.key}
+        return {"ok": True, "branch_id": branch_id, "key": body.key}
+
+    with _lock:
+        return workspace._mutate(write_and_persist)
 
 
 @app.post("/api/branches/{branch_id}/commit")
