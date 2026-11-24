@@ -7,6 +7,9 @@ from __future__ import annotations
 
 import argparse
 import contextvars
+import hashlib
+import time
+import uuid
 import functools
 import json
 import os
@@ -25,6 +28,7 @@ from cerbere_cohort.persistence import PersistentWorkspace
 from cerbere_cohort.postgres import _Connection as PostgresConnection
 from cerbere_cohort.postgres import PostgresPersistentWorkspace
 from cerbere_cohort.workspace import Branch
+from cerbere_cohort.tasks import TaskCoordinator, TaskError
 
 
 def _error_envelope(exc: Exception) -> dict[str, Any]:
@@ -186,87 +190,125 @@ class CohortService:
         self._lock = threading.RLock()
         self._db.execute(
             """
-            CREATE TABLE IF NOT EXISTS mcp_branches (
+            CREATE TABLE IF NOT EXISTS api_branches (
+                branch_id TEXT PRIMARY KEY,
                 agent_id TEXT NOT NULL,
                 branch_name TEXT NOT NULL,
                 base_version TEXT NOT NULL,
                 current_data_json TEXT NOT NULL,
                 intents_json TEXT NOT NULL,
                 fencing_tokens_json TEXT NOT NULL DEFAULT '{}',
-                PRIMARY KEY (agent_id, branch_name)
+                status TEXT NOT NULL,
+                conflicting_keys_json TEXT NOT NULL,
+                created_at TEXT NOT NULL
             )
             """
         )
-        if self.db_path is not None:
-            columns = {row['name'] for row in self._db.execute('PRAGMA table_info(mcp_branches)')}
-            if 'fencing_tokens_json' not in columns:
-                self._db.execute("ALTER TABLE mcp_branches ADD COLUMN fencing_tokens_json TEXT NOT NULL DEFAULT '{}'")
+        if self.db_path is None:
+            self._db.execute(
+                "ALTER TABLE api_branches ADD COLUMN IF NOT EXISTS fencing_tokens_json TEXT NOT NULL DEFAULT '{}'"
+            )
         else:
-            self._db.execute("ALTER TABLE mcp_branches ADD COLUMN IF NOT EXISTS fencing_tokens_json TEXT NOT NULL DEFAULT '{}'")
-        self._db.commit()
-        self._branches: dict[tuple[str, str], Branch] = {}
-        self._restore_branches()
-
-    def _restore_branches(self) -> None:
-        """Restore uncommitted branches after a process restart."""
-        with self._lock:
-            rows = self._db.execute("SELECT * FROM mcp_branches").fetchall()
-            committed = {
-                (event.agent_id, event.payload.get("branch_name"))
-                for event in self.workspace.get_events()
-                if event.action == "workspace.commit"
-            }
-            for row in rows:
-                key = (row["agent_id"], row["branch_name"])
-                if key in committed:
-                    # A crash may occur after the commit is durable but before
-                    # its branch row is deleted. Do not resurrect committed work.
-                    self._db.execute(
-                        "DELETE FROM mcp_branches WHERE agent_id = ? AND branch_name = ?",
-                        key,
-                    )
-                    continue
-                base = self.workspace._workspace._snapshots.get(row["base_version"])
-                if base is None:
-                    raise RuntimeError(
-                        f"Cannot restore branch {row['agent_id']}:{row['branch_name']}: "
-                        "its base snapshot is missing"
-                    )
-                branch = Branch(
-                    name=row["branch_name"],
-                    base_snapshot=base,
-                    lease_manager=self.workspace._workspace._lease_manager,
-                    agent_id=row["agent_id"],
-                    require_leases=self.workspace._workspace._require_leases,
+            columns = {row["name"] for row in self._db.execute("PRAGMA table_info(api_branches)")}
+            if "fencing_tokens_json" not in columns:
+                self._db.execute(
+                    "ALTER TABLE api_branches ADD COLUMN fencing_tokens_json TEXT NOT NULL DEFAULT '{}'"
                 )
-                branch.current_data = json.loads(row["current_data_json"])
-                branch.intents = json.loads(row["intents_json"])
-                branch.fencing_tokens = json.loads(row['fencing_tokens_json'] or '{}')
-                self._branches[key] = branch
-            self._db.commit()
+        self._db.commit()
+        self._migrate_legacy_mcp_branches()
 
-    def _persist_branch(self, agent_id: str, branch: Branch) -> None:
+    def _migrate_legacy_mcp_branches(self) -> None:
+        """Move pre-unification MCP branches into the REST branch registry once."""
+        exists = self._db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='mcp_branches'"
+        ).fetchone() if self.db_path is not None else self._db.execute(
+            "SELECT to_regclass(%s) AS name", ("cohort_mcp_branches",)
+        ).fetchone()
+        if not exists or (self.db_path is None and not exists["name"]):
+            return
+        rows = self._db.execute("SELECT * FROM mcp_branches").fetchall()
+        for row in rows:
+            digest = hashlib.sha256(
+                f"{row['agent_id']}\\0{row['branch_name']}".encode("utf-8")
+            ).hexdigest()[:32]
+            self._db.execute(
+                """
+                INSERT INTO api_branches
+                    (branch_id, agent_id, branch_name, base_version, current_data_json,
+                     intents_json, fencing_tokens_json, status, conflicting_keys_json, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 'open', '[]', ?)
+                ON CONFLICT(branch_id) DO NOTHING
+                """,
+                (
+                    f"mcp-legacy-{digest}", row["agent_id"], row["branch_name"],
+                    row["base_version"], row["current_data_json"], row["intents_json"],
+                    row["fencing_tokens_json"] or "{}", str(time.time()),
+                ),
+            )
+        self._db.commit()
+
+    def _branch_row(self, agent_id: str, branch_name: str):
+        rows = self._db.execute(
+            "SELECT * FROM api_branches WHERE agent_id = ? AND branch_name = ? AND status = 'open'",
+            (agent_id, branch_name),
+        ).fetchall()
+        if not rows:
+            raise ValueError(
+                f"Branch '{branch_name}' not found for agent '{agent_id}'. "
+                "Create it first with workspace_create_branch."
+            )
+        if len(rows) > 1:
+            raise ValueError(
+                f"Multiple open branches named '{branch_name}' exist for agent '{agent_id}'; "
+                "resolve the duplicate through the REST API before continuing."
+            )
+        return rows[0]
+
+    def _branch_from_row(self, row) -> Branch:
+        base = self.workspace._workspace._snapshots.get(row["base_version"])
+        if base is None:
+            raise RuntimeError(
+                f"Cannot restore branch {row['agent_id']}:{row['branch_name']}: "
+                "its base snapshot is missing"
+            )
+        branch = Branch(
+            name=row["branch_name"],
+            base_snapshot=base,
+            lease_manager=self.workspace._workspace._lease_manager,
+            agent_id=row["agent_id"],
+            require_leases=self.workspace._workspace._require_leases,
+        )
+        branch.current_data = json.loads(row["current_data_json"])
+        branch.intents = json.loads(row["intents_json"])
+        branch.fencing_tokens = json.loads(row["fencing_tokens_json"] or "{}")
+        return branch
+
+    def _save_branch_row(self, branch_id: str, agent_id: str, branch: Branch,
+                         *, status: str = "open", conflicting_keys=None) -> None:
         self._db.execute(
             """
-            INSERT INTO mcp_branches
-                (agent_id, branch_name, base_version, current_data_json, intents_json, fencing_tokens_json)
-            VALUES (?, ?, ?, ?, ?, ?)
-            ON CONFLICT(agent_id, branch_name) DO UPDATE SET
-                base_version=excluded.base_version,
+            INSERT INTO api_branches
+                (branch_id, agent_id, branch_name, base_version, current_data_json,
+                 intents_json, fencing_tokens_json, status, conflicting_keys_json, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(branch_id) DO UPDATE SET
                 current_data_json=excluded.current_data_json,
                 intents_json=excluded.intents_json,
-                fencing_tokens_json=excluded.fencing_tokens_json
+                fencing_tokens_json=excluded.fencing_tokens_json,
+                status=excluded.status,
+                conflicting_keys_json=excluded.conflicting_keys_json
             """,
             (
-                agent_id,
-                branch.name,
-                branch.base_version,
+                branch_id, agent_id, branch.name, branch.base_version,
                 json.dumps(branch.current_data, ensure_ascii=False, sort_keys=True),
                 json.dumps(branch.intents, ensure_ascii=False, sort_keys=True),
                 json.dumps(branch.fencing_tokens, ensure_ascii=False, sort_keys=True),
+                status, json.dumps(conflicting_keys or []), str(time.time()),
             ),
         )
-        self._db.commit()
+
+    def _task_coordinator(self) -> TaskCoordinator:
+        return TaskCoordinator(self._db)
 
     def bind_agent_identity(self, agent_id: str, scopes: list[str]) -> None:
         if not isinstance(agent_id, str) or not agent_id.strip():
@@ -295,17 +337,12 @@ class CohortService:
 
     def _branch(self, agent_id: str, branch_name: str) -> Branch:
         self._assert_agent(agent_id)
-        try:
-            return self._branches[(agent_id, branch_name)]
-        except KeyError as exc:
-            raise ValueError(
-                f"Branch '{branch_name}' not found for agent '{agent_id}'. "
-                "Create it first with workspace_create_branch."
-            ) from exc
+        return self._branch_from_row(self._branch_row(agent_id, branch_name))
 
     def get_state(self) -> dict[str, Any]:
         self._require_scope('workspace:read')
         with self._lock:
+            self.workspace.refresh()
             return {
                 "head_version": self.workspace.head.version_id,
                 "state": self.workspace.head.data,
@@ -315,22 +352,32 @@ class CohortService:
         self._require_scope('workspace:write')
         self._assert_agent(agent_id)
         self._validate_identity(agent_id, branch_name)
-        with self._lock:
-            key = (agent_id, branch_name)
-            if key in self._branches:
+
+        def create_and_persist():
+            existing = self._db.execute(
+                "SELECT branch_id FROM api_branches WHERE agent_id = ? AND branch_name = ? AND status = 'open'",
+                (agent_id, branch_name),
+            ).fetchone()
+            if existing:
                 raise ValueError(f"Branch '{branch_name}' already exists for '{agent_id}'.")
             branch = self.workspace.create_branch(agent_id, branch_name)
-            self._branches[key] = branch
-            self._persist_branch(agent_id, branch)
+            branch_id = f"mcp-{uuid.uuid4()}"
+            self._save_branch_row(branch_id, agent_id, branch)
             return {
+                "branch_id": branch_id,
                 "agent_id": agent_id,
                 "branch_name": branch_name,
                 "base_version": branch.base_version,
             }
 
+        with self._lock:
+            return self.workspace._mutate(create_and_persist)
+
     def read_branch(self, agent_id: str, branch_name: str, key: str) -> dict[str, Any]:
         self._require_scope('workspace:read')
+        self._assert_agent(agent_id)
         with self._lock:
+            self.workspace.refresh()
             branch = self._branch(agent_id, branch_name)
             return {"key": key, "exists": key in branch.current_data, "value": branch.get(key)}
 
@@ -339,40 +386,147 @@ class CohortService:
     ) -> dict[str, Any]:
         self._require_scope('workspace:write')
         self._assert_agent(agent_id)
-        with self._lock:
-            branch = self._branch(agent_id, branch_name)
-            # PersistentWorkspace replays state after each mutation; rebind the
-            # branch before checking its lease so it sees the current lease manager.
-            branch._lease_manager = self.workspace._workspace._lease_manager
+
+        def write_and_persist():
+            row = self._branch_row(agent_id, branch_name)
+            branch = self._branch_from_row(row)
             branch.set(key, value, intent=intent)
-            self._persist_branch(agent_id, branch)
+            self._save_branch_row(row["branch_id"], agent_id, branch,
+                                  conflicting_keys=json.loads(row["conflicting_keys_json"]))
             return {"updated": True, "key": key, "branch_name": branch_name}
+
+        with self._lock:
+            return self.workspace._mutate(write_and_persist)
 
     def delete_branch_key(
         self, agent_id: str, branch_name: str, key: str, intent: str | None = None
     ) -> dict[str, Any]:
         self._require_scope('workspace:write')
         self._assert_agent(agent_id)
-        with self._lock:
-            branch = self._branch(agent_id, branch_name)
-            branch._lease_manager = self.workspace._workspace._lease_manager
+
+        def delete_and_persist():
+            row = self._branch_row(agent_id, branch_name)
+            branch = self._branch_from_row(row)
             branch.delete(key, intent=intent)
-            self._persist_branch(agent_id, branch)
+            self._save_branch_row(row["branch_id"], agent_id, branch,
+                                  conflicting_keys=json.loads(row["conflicting_keys_json"]))
             return {"deleted": True, "key": key, "branch_name": branch_name}
 
-    def commit_branch(self, agent_id: str, branch_name: str) -> dict[str, Any]:
+        with self._lock:
+            return self.workspace._mutate(delete_and_persist)
+
+    def commit_branch(
+        self, agent_id: str, branch_name: str, task_id: str | None = None,
+        task_fencing_token: int | None = None, idempotency_key: str | None = None,
+        result: Any = None,
+    ) -> dict[str, Any]:
         self._require_scope('workspace:write')
         self._assert_agent(agent_id)
-        with self._lock:
-            branch = self._branch(agent_id, branch_name)
-            snapshot = self.workspace.commit(agent_id, branch)
-            self._db.execute(
-                "DELETE FROM mcp_branches WHERE agent_id = ? AND branch_name = ?",
-                (agent_id, branch_name),
+        if task_id and (task_fencing_token is None or not idempotency_key):
+            raise ValueError("Task-bound commits require task_fencing_token and idempotency_key")
+        if not task_id and (task_fencing_token is not None or idempotency_key is not None):
+            raise ValueError("Task fencing and idempotency arguments require task_id")
+
+        def commit_once():
+            row = self._branch_row(agent_id, branch_name)
+            branch = self._branch_from_row(row)
+            snapshot = self.workspace._workspace.commit(agent_id, branch)
+            completed_task = None
+            if task_id:
+                completed_task = self._task_coordinator().complete_in_transaction(
+                    task_id, agent_id, task_fencing_token,
+                    result if result is not None else {
+                        "branch_id": row["branch_id"], "head": snapshot.version_id
+                    },
+                    idempotency_key,
+                )
+            self._save_branch_row(
+                row["branch_id"], agent_id, branch, status="merged", conflicting_keys=[]
             )
-            self._db.commit()
-            del self._branches[(agent_id, branch_name)]
-            return {"committed": True, "head_version": snapshot.version_id, "state": snapshot.data}
+            response = {
+                "committed": True,
+                "branch_id": row["branch_id"],
+                "head_version": snapshot.version_id,
+                "state": snapshot.data,
+            }
+            if completed_task is not None:
+                response["task"] = completed_task
+            return response
+
+        with self._lock:
+            if task_id:
+                request_hash = hashlib.sha256(json.dumps({
+                    "agent_id": agent_id,
+                    "branch_name": branch_name,
+                    "task_id": task_id,
+                    "task_fencing_token": task_fencing_token,
+                    "result": result,
+                }, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+                return self.workspace.execute_idempotent(
+                    f"task-branch-commit:{task_id}", idempotency_key, request_hash, commit_once
+                )
+            return self.workspace._mutate(commit_once)
+
+    def create_task(self, title: str, payload: Any, idempotency_key: str | None = None):
+        self._require_scope('workspace:write')
+        return self._task_coordinator().create(title, payload, idempotency_key)
+
+    def list_tasks(self, limit: int = 100):
+        self._require_scope('workspace:read')
+        items = self._task_coordinator().list(limit)
+        principal = _request_principal.get()
+        agent_id = principal["agent_id"] if principal is not None else self.authenticated_agent_id
+        if agent_id:
+            items = [item for item in items if item["status"] == "pending" or item["assigned_agent_id"] == agent_id]
+        return items
+
+    def get_task(self, task_id: str):
+        self._require_scope('workspace:read')
+        item = self._task_coordinator().get(task_id)
+        principal = _request_principal.get()
+        agent_id = principal["agent_id"] if principal is not None else self.authenticated_agent_id
+        if agent_id and item["status"] != "pending" and item["assigned_agent_id"] != agent_id:
+            raise ValueError("Task not found")
+        return item
+
+    def get_task_events(self, task_id: str):
+        self.get_task(task_id)
+        return self._task_coordinator().events(task_id)
+
+    def claim_task(self, task_id: str, agent_id: str, lease_seconds: float = 60):
+        self._require_scope('workspace:write')
+        self._assert_agent(agent_id)
+        return self._task_coordinator().claim(task_id, agent_id, lease_seconds)
+
+    def start_task(self, task_id: str, agent_id: str, fencing_token: int):
+        self._require_scope('workspace:write')
+        self._assert_agent(agent_id)
+        return self._task_coordinator().start(task_id, agent_id, fencing_token)
+
+    def heartbeat_task(self, task_id: str, agent_id: str, fencing_token: int,
+                       lease_seconds: float = 60):
+        self._require_scope('workspace:write')
+        self._assert_agent(agent_id)
+        return self._task_coordinator().heartbeat(task_id, agent_id, fencing_token, lease_seconds)
+
+    def complete_task(self, task_id: str, agent_id: str, fencing_token: int,
+                      result: Any, idempotency_key: str):
+        self._require_scope('workspace:write')
+        self._assert_agent(agent_id)
+        return self._task_coordinator().complete(
+            task_id, agent_id, fencing_token, result, idempotency_key
+        )
+
+    def fail_task(self, task_id: str, agent_id: str, fencing_token: int, error: str):
+        self._require_scope('workspace:write')
+        self._assert_agent(agent_id)
+        return self._task_coordinator().fail(task_id, agent_id, fencing_token, error)
+
+    def retry_task(self, task_id: str):
+        self._require_scope('tasks:admin')
+        if self.authenticated_agent_id or _request_principal.get() is not None:
+            raise MCPAuthorizationError("Only a workspace user can requeue a failed task")
+        return self._task_coordinator().retry(task_id)
 
     def acquire_lease(
         self, agent_id: str, resource_key: str, duration_seconds: float = 30.0
@@ -534,9 +688,76 @@ def create_server(service: CohortService, host: str = "127.0.0.1", port: int = 8
 
     @mcp.tool()
     @structured_tool_errors
-    def workspace_commit(agent_id: str, branch_name: str) -> dict[str, Any]:
-        """Commit a branch. Conflicting concurrent edits are rejected, never silently overwritten."""
-        return service.commit_branch(agent_id, branch_name)
+    def workspace_commit(
+        agent_id: str, branch_name: str, task_id: str | None = None,
+        task_fencing_token: int | None = None, idempotency_key: str | None = None,
+        result: Any = None,
+    ) -> dict[str, Any]:
+        """Commit a branch, optionally completing its fenced task in the same transaction."""
+        return service.commit_branch(
+            agent_id, branch_name, task_id, task_fencing_token, idempotency_key, result
+        )
+
+    @mcp.tool()
+    @structured_tool_errors
+    def task_create(title: str, payload: Any, idempotency_key: str | None = None):
+        """Create a durable shared task."""
+        return service.create_task(title, payload, idempotency_key)
+
+    @mcp.tool()
+    @structured_tool_errors
+    def task_list(limit: int = 100):
+        """List pending tasks and tasks assigned to the authenticated agent."""
+        return service.list_tasks(limit)
+
+    @mcp.tool()
+    @structured_tool_errors
+    def task_get(task_id: str):
+        """Read a task visible to the authenticated agent."""
+        return service.get_task(task_id)
+
+    @mcp.tool()
+    @structured_tool_errors
+    def task_events(task_id: str):
+        """Read lifecycle events for a visible task."""
+        return service.get_task_events(task_id)
+
+    @mcp.tool()
+    @structured_tool_errors
+    def task_claim(task_id: str, agent_id: str, lease_seconds: float = 60):
+        """Claim a pending or expired task and receive its fencing token."""
+        return service.claim_task(task_id, agent_id, lease_seconds)
+
+    @mcp.tool()
+    @structured_tool_errors
+    def task_start(task_id: str, agent_id: str, fencing_token: int):
+        """Start an assigned task using its current fencing token."""
+        return service.start_task(task_id, agent_id, fencing_token)
+
+    @mcp.tool()
+    @structured_tool_errors
+    def task_heartbeat(task_id: str, agent_id: str, fencing_token: int, lease_seconds: float = 60):
+        """Renew an active task lease."""
+        return service.heartbeat_task(task_id, agent_id, fencing_token, lease_seconds)
+
+    @mcp.tool()
+    @structured_tool_errors
+    def task_complete(task_id: str, agent_id: str, fencing_token: int,
+                      result: Any, idempotency_key: str):
+        """Complete a task exactly once using its current fencing token."""
+        return service.complete_task(task_id, agent_id, fencing_token, result, idempotency_key)
+
+    @mcp.tool()
+    @structured_tool_errors
+    def task_fail(task_id: str, agent_id: str, fencing_token: int, error: str):
+        """Mark an active task failed using its current fencing token."""
+        return service.fail_task(task_id, agent_id, fencing_token, error)
+
+    @mcp.tool()
+    @structured_tool_errors
+    def task_retry(task_id: str):
+        """Requeue a failed task; requires the tasks:admin scope and a non-agent principal."""
+        return service.retry_task(task_id)
 
     @mcp.tool()
     @structured_tool_errors
