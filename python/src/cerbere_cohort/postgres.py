@@ -109,6 +109,7 @@ class _Connection:
             "leases": f'{schema}.cohort_leases',
             "metadata": f'{schema}.cohort_metadata',
             "lease_counters": f'{schema}.cohort_lease_counters',
+            "idempotency_records": f'{schema}.cohort_idempotency_records',
             "api_branches": "cohort_api_branches" if public else f'{schema}.cohort_api_branches',
             "mcp_branches": "cohort_mcp_branches" if public else f'{schema}.cohort_mcp_branches',
             "idx_events_timestamp": 'cohort_idx_events_timestamp',
@@ -277,6 +278,11 @@ class PostgresPersistentWorkspace(PersistentWorkspace):
                 fencing_token BIGINT NOT NULL DEFAULT 0)""",
             """CREATE TABLE IF NOT EXISTS metadata (
                 key TEXT PRIMARY KEY, value TEXT NOT NULL)""",
+            """CREATE TABLE IF NOT EXISTS idempotency_records (
+                scope TEXT NOT NULL, idempotency_key TEXT NOT NULL,
+                request_hash TEXT NOT NULL, response_json TEXT NOT NULL,
+                created_at DOUBLE PRECISION NOT NULL,
+                PRIMARY KEY (scope, idempotency_key))""",
             """CREATE TABLE IF NOT EXISTS lease_counters (
                 resource_key TEXT PRIMARY KEY, fencing_token BIGINT NOT NULL)""",
             "CREATE INDEX IF NOT EXISTS idx_events_timestamp ON events(timestamp)",
