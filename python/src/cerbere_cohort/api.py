@@ -1301,43 +1301,50 @@ def get_branch_conflict(branch_id: str, context: dict[str, Any] = Depends(requir
 
 @app.post("/api/branches/{branch_id}/resolve")
 def resolve_branch(branch_id: str, body: ResolveRequest, context: dict[str, Any] = Depends(require_workspace_write_access)):
-    with _lock:
+    if body.strategy == "PreferHead":
+        resolver = PreferHead()
+    elif body.strategy == "PreferBranch":
+        resolver = PreferBranch()
+    else:
+        if not body.priority:
+            raise HTTPException(422, "priority is required for PreferAgent")
+        resolver = PreferAgent(body.priority)
+
+    class AuditedResolver:
+        name = resolver.name
+        def resolve(self, conflict):
+            decision = resolver.resolve(conflict)
+            if decision is None:
+                return None
+            return Resolution(
+                present=decision.present, value=decision.value, rationale=body.rationale,
+            )
+
+    def resolve_and_persist():
+        _restore_api_branches(clear=True, commit=False)
         item = _branches.get(branch_id)
         if not item or item["status"] != "open" or not _agent_owns(context, item["agent_id"]):
             raise HTTPException(404, "Open branch not found")
         if not item.get("conflicting_keys"):
             raise HTTPException(409, "Branch has no recorded conflict")
-        if body.strategy == "PreferHead":
-            resolver = PreferHead()
-        elif body.strategy == "PreferBranch":
-            resolver = PreferBranch()
-        else:
-            if not body.priority:
-                raise HTTPException(422, "priority is required for PreferAgent")
-            resolver = PreferAgent(body.priority)
-        # Keep the user rationale in the event metadata through a small resolver wrapper.
-        class AuditedResolver:
-            name = resolver.name
-            def resolve(self, conflict):
-                decision = resolver.resolve(conflict)
-                if decision is None:
-                    return None
-                return Resolution(
-                    present=decision.present,
-                    value=decision.value,
-                    rationale=body.rationale,
-                )
         try:
             with event_actor(context):
-                snapshot = workspace.commit(item["agent_id"], item["branch"], resolver=AuditedResolver())
+                snapshot = workspace._workspace.commit(
+                    item["agent_id"], item["branch"], resolver=AuditedResolver()
+                )
             item["status"] = "merged"
             item["conflicting_keys"] = []
-            _save_api_branch(branch_id, item)
+            _save_api_branch(branch_id, item, commit=False)
             return {"ok": True, "head": snapshot.version_id, "branch": _branch_summary(branch_id, item)}
         except ConflictError as exc:
             item["conflicting_keys"] = list(exc.conflicting_keys)
-            _save_api_branch(branch_id, item)
-            raise HTTPException(409, detail={"message": str(exc), "conflicting_keys": list(exc.conflicting_keys)}) from exc
+            _save_api_branch(branch_id, item, commit=False)
+            raise HTTPException(
+                409, detail={"message": str(exc), "conflicting_keys": list(exc.conflicting_keys)}
+            ) from exc
+
+    with _lock:
+        return workspace._mutate(resolve_and_persist)
 
 
 @app.get("/api/state")
