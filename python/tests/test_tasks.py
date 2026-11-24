@@ -107,3 +107,24 @@ def test_task_creation_idempotency_rejects_changed_payload(tmp_path):
         tasks.create("Send invoice", {"invoice": 8}, "create-key")
     assert exc.value.code == "idempotency_key_reused"
     store.close()
+
+
+def test_failed_task_can_be_explicitly_requeued_with_a_new_fencing_token(tmp_path):
+    store = PersistentWorkspace(tmp_path / "task-retry.db")
+    tasks = TaskCoordinator(store._conn)
+    task = tasks.create("Publish release", {})
+    first = tasks.claim(task["task_id"], "agent-a", lease_seconds=30)
+    tasks.start(task["task_id"], "agent-a", first["fencing_token"])
+    failed = tasks.fail(task["task_id"], "agent-a", first["fencing_token"], "temporary provider outage")
+    assert failed["status"] == "failed"
+
+    pending = tasks.retry(task["task_id"])
+    assert pending["status"] == "pending"
+    assert pending["assigned_agent_id"] is None
+    retried = tasks.claim(task["task_id"], "agent-b", lease_seconds=30)
+    assert retried["fencing_token"] == first["fencing_token"] + 1
+    assert retried["attempt_count"] == 2
+    assert [event["action"] for event in tasks.events(task["task_id"])][-2:] == [
+        "task.requeued", "task.assigned"
+    ]
+    store.close()
