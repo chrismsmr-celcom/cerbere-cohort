@@ -1,0 +1,49 @@
+name: Publish GitHub Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Create release from tag
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check tag matches package version
+        run: |
+          VERSION=$(python -c "import tomllib; print(tomllib.load(open('python/pyproject.toml','rb'))['project']['version'])")
+          if [ "v$VERSION" != "$GITHUB_REF_NAME" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match package version $VERSION" >&2
+            exit 1
+          fi
+
+      - name: Extract release notes
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          awk -v version="$VERSION" '
+            $0 == "## [" version "] - " || index($0, "## [" version "] - ") == 1 { found=1; print; next }
+            found && /^## \\[/ { exit }
+            found { print }
+          ' CHANGELOG.md > /tmp/release-notes.md
+          if [ ! -s /tmp/release-notes.md ]; then
+            echo "No CHANGELOG.md section found for $VERSION" >&2
+            exit 1
+          fi
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "Cohort $GITHUB_REF_NAME" \
+            --notes-file /tmp/release-notes.md
