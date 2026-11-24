@@ -1,16 +1,18 @@
-"""Transactional workspace invitation email delivery through Resend."""
+"""Transactional workspace invitation email delivery through Resend SMTP."""
 
 from __future__ import annotations
 
 import html
-import json
 import os
-import urllib.error
-import urllib.parse
-import urllib.request
+import smtplib
+import ssl
+from email.message import EmailMessage
+from email.utils import make_msgid
 
 
-RESEND_API_URL = "https://api.resend.com/emails"
+DEFAULT_SMTP_HOST = "smtp.resend.com"
+DEFAULT_SMTP_PORT = 465
+DEFAULT_SMTP_USERNAME = "resend"
 DEFAULT_FROM_EMAIL = "Cohort <hello@cerbereag.site>"
 DEFAULT_APP_URL = "https://cohort.cerbereag.site/app"
 
@@ -19,21 +21,20 @@ class EmailDeliveryError(RuntimeError):
     """Raised when a transactional email cannot be delivered."""
 
 
-def resend_is_configured() -> bool:
-    return bool(os.getenv("RESEND_API_KEY", "").strip())
+def smtp_is_configured() -> bool:
+    return bool(os.getenv("RESEND_SMTP_PASSWORD", "").strip())
 
 
 def build_workspace_invitation_url(token: str) -> str:
+    from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+
     app_url = os.getenv("COHORT_APP_URL", DEFAULT_APP_URL).strip() or DEFAULT_APP_URL
-    parts = urllib.parse.urlsplit(app_url)
+    parts = urlsplit(app_url)
     if parts.scheme != "https" or not parts.netloc:
         raise EmailDeliveryError("COHORT_APP_URL must be an absolute HTTPS URL")
-    query = urllib.parse.parse_qsl(parts.query, keep_blank_values=True)
-    query = [(key, value) for key, value in query if key != "invite"]
+    query = [(key, value) for key, value in parse_qsl(parts.query, keep_blank_values=True) if key != "invite"]
     query.append(("invite", token))
-    return urllib.parse.urlunsplit(
-        (parts.scheme, parts.netloc, parts.path or "/app", urllib.parse.urlencode(query), parts.fragment)
-    )
+    return urlunsplit((parts.scheme, parts.netloc, parts.path or "/app", urlencode(query), parts.fragment))
 
 
 def send_workspace_invitation_email(
@@ -43,11 +44,19 @@ def send_workspace_invitation_email(
     role: str,
     workspace_name: str,
 ) -> str | None:
-    api_key = os.getenv("RESEND_API_KEY", "").strip()
-    if not api_key:
-        raise EmailDeliveryError("RESEND_API_KEY is not configured")
-
+    host = os.getenv("RESEND_SMTP_HOST", DEFAULT_SMTP_HOST).strip() or DEFAULT_SMTP_HOST
+    try:
+        port = int(os.getenv("RESEND_SMTP_PORT", str(DEFAULT_SMTP_PORT)).strip())
+    except ValueError:
+        raise EmailDeliveryError("RESEND_SMTP_PORT must be a valid port number") from None
+    username = os.getenv("RESEND_SMTP_USERNAME", DEFAULT_SMTP_USERNAME).strip() or DEFAULT_SMTP_USERNAME
+    password = os.getenv("RESEND_SMTP_PASSWORD", "").strip()
     from_email = os.getenv("RESEND_FROM_EMAIL", DEFAULT_FROM_EMAIL).strip()
+
+    if not password:
+        raise EmailDeliveryError("RESEND_SMTP_PASSWORD is not configured")
+    if not 1 <= port <= 65535:
+        raise EmailDeliveryError("RESEND_SMTP_PORT must be between 1 and 65535")
     if not from_email:
         raise EmailDeliveryError("RESEND_FROM_EMAIL is not configured")
 
@@ -87,31 +96,30 @@ def send_workspace_invitation_email(
         f"Accept your invitation: {invite_url}\n\n"
         "This invitation expires automatically. If you weren't expecting it, ignore this email."
     )
-    payload = {
-        "from": from_email,
-        "to": [to_email],
-        "subject": subject,
-        "html": html_body,
-        "text": text_body,
-    }
-    request = urllib.request.Request(
-        RESEND_API_URL,
-        data=json.dumps(payload).encode("utf-8"),
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        },
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=10) as response:
-            result = json.loads(response.read().decode("utf-8"))
-    except urllib.error.HTTPError as exc:
-        raise EmailDeliveryError(f"Resend rejected the invitation email (HTTP {exc.code})") from None
-    except (urllib.error.URLError, TimeoutError, OSError) as exc:
-        raise EmailDeliveryError(f"Resend delivery request failed ({type(exc).__name__})") from None
-    except (UnicodeDecodeError, json.JSONDecodeError):
-        raise EmailDeliveryError("Resend returned an invalid response") from None
+    message = EmailMessage()
+    message["From"] = from_email
+    message["To"] = to_email
+    message["Subject"] = subject
+    message["Message-ID"] = make_msgid(domain="cerbereag.site")
+    message.set_content(text_body)
+    message.add_alternative(html_body, subtype="html")
 
-    email_id = result.get("id") if isinstance(result, dict) else None
-    return str(email_id) if email_id else None
+    context = ssl.create_default_context()
+    try:
+        if port in {465, 2465}:
+            with smtplib.SMTP_SSL(host, port, timeout=15, context=context) as server:
+                server.ehlo()
+                server.login(username, password)
+                server.send_message(message)
+        else:
+            with smtplib.SMTP(host, port, timeout=15) as server:
+                server.ehlo()
+                server.starttls(context=context)
+                server.ehlo()
+                server.login(username, password)
+                server.send_message(message)
+    except (smtplib.SMTPException, OSError, TimeoutError) as exc:
+        # Do not expose credentials or the full SMTP response in logs/API errors.
+        raise EmailDeliveryError(f"Resend SMTP delivery failed ({type(exc).__name__})") from None
+
+    return message["Message-ID"]
