@@ -1,4 +1,3 @@
-import json
 from urllib.parse import parse_qs, urlsplit
 
 from cerbere_cohort.email import (
@@ -34,50 +33,100 @@ def test_build_invitation_url_rejects_non_https(monkeypatch):
         raise AssertionError("Non-HTTPS invitation URL must be rejected")
 
 
-def test_send_workspace_invitation_email_posts_branded_html_and_text(monkeypatch):
+def test_smtp_delivery_uses_resend_ssl_and_branded_message(monkeypatch):
     import cerbere_cohort.email as email
 
-    monkeypatch.setenv("RESEND_API_KEY", "re_test")
+    monkeypatch.setenv("RESEND_SMTP_HOST", "smtp.resend.com")
+    monkeypatch.setenv("RESEND_SMTP_PORT", "465")
+    monkeypatch.setenv("RESEND_SMTP_USERNAME", "resend")
+    monkeypatch.setenv("RESEND_SMTP_PASSWORD", "re_test_secret")
     monkeypatch.setenv("RESEND_FROM_EMAIL", "Cohort <hello@example.com>")
     captured = {}
 
-    class FakeResponse:
+    class FakeSMTP:
+        def __init__(self, host, port, timeout, context):
+            captured.update(host=host, port=port, timeout=timeout, context=context)
+
         def __enter__(self):
             return self
 
         def __exit__(self, *args):
             return False
 
-        def read(self):
-            return b'{"id":"email_test_123"}'
+        def ehlo(self):
+            captured["ehlo"] = True
 
-    def fake_urlopen(request, timeout):
-        captured["url"] = request.full_url
-        captured["timeout"] = timeout
-        captured["headers"] = dict(request.header_items())
-        captured["payload"] = json.loads(request.data.decode("utf-8"))
-        return FakeResponse()
+        def login(self, username, password):
+            captured["username"] = username
+            captured["password"] = password
 
-    monkeypatch.setattr(email.urllib.request, "urlopen", fake_urlopen)
-    email_id = send_workspace_invitation_email(
+        def send_message(self, message):
+            captured["message"] = message
+
+    monkeypatch.setattr(email.smtplib, "SMTP_SSL", FakeSMTP)
+    message_id = send_workspace_invitation_email(
         to_email="member@example.com",
         invite_url="https://cohort.example/app?invite=token123",
         role="member",
         workspace_name="Research Team",
     )
 
-    assert email_id == "email_test_123"
-    assert captured["url"] == email.RESEND_API_URL
-    assert captured["timeout"] == 10
-    assert captured["payload"]["from"] == "Cohort <hello@example.com>"
-    assert captured["payload"]["to"] == ["member@example.com"]
-    assert "Research Team" in captured["payload"]["html"]
-    assert "https://cohort.example/app?invite=token123" in captured["payload"]["html"]
-    assert "https://cohort.example/app?invite=token123" in captured["payload"]["text"]
+    assert captured["host"] == "smtp.resend.com"
+    assert captured["port"] == 465
+    assert captured["timeout"] == 15
+    assert captured["username"] == "resend"
+    assert captured["password"] == "re_test_secret"
+    assert captured["message"]["From"] == "Cohort <hello@example.com>"
+    assert captured["message"]["To"] == "member@example.com"
+    assert "Research Team" in captured["message"].get_body(preferencelist=("html",)).get_content()
+    assert message_id == captured["message"]["Message-ID"]
 
 
-def test_send_workspace_invitation_email_requires_api_key(monkeypatch):
-    monkeypatch.delenv("RESEND_API_KEY", raising=False)
+def test_smtp_delivery_uses_starttls_for_port_587(monkeypatch):
+    import cerbere_cohort.email as email
+
+    monkeypatch.setenv("RESEND_SMTP_PORT", "587")
+    monkeypatch.setenv("RESEND_SMTP_PASSWORD", "re_test_secret")
+    captured = {}
+
+    class FakeSMTP:
+        def __init__(self, host, port, timeout):
+            captured.update(host=host, port=port, timeout=timeout)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def ehlo(self):
+            captured["ehlo"] = captured.get("ehlo", 0) + 1
+
+        def starttls(self, context):
+            captured["starttls"] = context
+
+        def login(self, username, password):
+            captured["login"] = (username, password)
+
+        def send_message(self, message):
+            captured["sent"] = True
+
+    monkeypatch.setattr(email.smtplib, "SMTP", FakeSMTP)
+    send_workspace_invitation_email(
+        to_email="member@example.com",
+        invite_url="https://cohort.example/app?invite=token123",
+        role="member",
+        workspace_name="Research Team",
+    )
+    assert captured["port"] == 587
+    assert captured["ehlo"] == 2
+    assert "starttls" in captured
+    assert captured["login"] == ("resend", "re_test_secret")
+    assert captured["sent"] is True
+
+
+def test_smtp_delivery_requires_password(monkeypatch):
+    monkeypatch.delenv("RESEND_SMTP_PASSWORD", raising=False)
     try:
         send_workspace_invitation_email(
             to_email="member@example.com",
@@ -86,6 +135,22 @@ def test_send_workspace_invitation_email_requires_api_key(monkeypatch):
             workspace_name="Research Team",
         )
     except EmailDeliveryError as exc:
-        assert "RESEND_API_KEY" in str(exc)
+        assert "RESEND_SMTP_PASSWORD" in str(exc)
     else:
-        raise AssertionError("Missing Resend API key must fail closed")
+        raise AssertionError("Missing SMTP password must fail closed")
+
+
+def test_smtp_delivery_rejects_invalid_port(monkeypatch):
+    monkeypatch.setenv("RESEND_SMTP_PORT", "not-a-port")
+    monkeypatch.setenv("RESEND_SMTP_PASSWORD", "re_test_secret")
+    try:
+        send_workspace_invitation_email(
+            to_email="member@example.com",
+            invite_url="https://cohort.example/app?invite=token",
+            role="member",
+            workspace_name="Research Team",
+        )
+    except EmailDeliveryError as exc:
+        assert "port" in str(exc).lower()
+    else:
+        raise AssertionError("Invalid SMTP port must fail closed")
