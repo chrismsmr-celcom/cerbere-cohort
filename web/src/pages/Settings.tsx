@@ -36,7 +36,7 @@ type Invitation = {
   revoked_at: string | null;
   created_at: string;
 };
-type CreatedInvitation = { id: string; email: string; role: string; expires_at: string; token: string; email_sent: boolean };
+type CreatedInvitation = { id: string; email: string; role: string; expires_at: string; token: string; email_sent: boolean; email_error?: string };
 
 export default function Settings({ ctx, dark, setDark, mode, setMode, canManageTeam }: { ctx: Ctx; dark: boolean; setDark: (v: boolean) => void; mode: SidebarMode; setMode: (m: SidebarMode) => void; canManageTeam: boolean }) {
   const s = ctx.data.settings;
@@ -243,8 +243,17 @@ export default function Settings({ ctx, dark, setDark, mode, setMode, canManageT
     setResendingInvitationId(invitation.id);
     setInvitationsError("");
     try {
-      await api("/organizations/invitations/" + encodeURIComponent(invitation.id) + "/resend", { method: "POST" });
-      toast("Invitation email resent");
+      const result = await api<{ resent: boolean; email: string; expires_at: string; token: string; email_sent: boolean; email_error?: string }>("/organizations/invitations/" + encodeURIComponent(invitation.id) + "/resend", { method: "POST" });
+      setCreatedInvitation({
+        id: invitation.id,
+        email: result.email,
+        role: invitation.role,
+        expires_at: result.expires_at,
+        token: result.token,
+        email_sent: result.email_sent,
+        email_error: result.email_error,
+      });
+      toast(result.email_sent ? "Invitation email resent" : "Email failed; copy the valid invitation link below.", result.email_sent ? "ok" : "err");
       await loadInvitations();
     } catch (error) {
       setInvitationsError(error instanceof Error ? error.message : "Unable to resend invitation.");
@@ -305,9 +314,12 @@ export default function Settings({ ctx, dark, setDark, mode, setMode, canManageT
             <div className="c2" style={{ display: "flex", alignItems: "end" }}><button className="btn btn-primary" type="submit" disabled={inviteBusy || !inviteEmail.trim()}>{inviteBusy ? "Creating…" : "Create invite"}</button></div>
           </div>
           <div className="notice">Cohort sends the invitation automatically by email. The invited person must sign in with the exact email address the invitation was sent to. You can also copy the link as a fallback.</div>
-          {createdInvitation && <div className="notice success">
-            <div className="row wrap" style={{ justifyContent: "space-between" }}><strong>Invitation email sent to {createdInvitation.email}</strong><Tag tone="ok">Email sent</Tag></div>
-            <p className="muted">The invitation is single-use and expires on {new Date(createdInvitation.expires_at).toLocaleDateString()}. Keep the link as a fallback; the signed-in account email must match.</p>
+          {createdInvitation && <div className={createdInvitation.email_sent ? "notice success" : "notice warn"}>
+            <div className="row wrap" style={{ justifyContent: "space-between" }}>
+              <strong>{createdInvitation.email_sent ? `Invitation email sent to ${createdInvitation.email}` : `Invitation created; email delivery failed for ${createdInvitation.email}`}</strong>
+              <Tag tone={createdInvitation.email_sent ? "ok" : "warn"}>{createdInvitation.email_sent ? "Email sent" : "Manual link available"}</Tag>
+            </div>
+            <p className="muted">{createdInvitation.email_error || "The invitation is single-use."} It expires on {new Date(createdInvitation.expires_at).toLocaleDateString()}. The signed-in account email must match the invited address.</p>
             <code style={{ display: "block", overflowWrap: "anywhere", padding: 12, background: "var(--surface-2)", borderRadius: 8 }}>{invitationUrl(createdInvitation)}</code>
             <button className="btn btn-secondary" type="button" onClick={() => void copyInvitation()}>Copy invitation link</button>
           </div>}
