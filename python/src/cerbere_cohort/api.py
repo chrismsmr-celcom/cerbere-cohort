@@ -151,9 +151,14 @@ def _restore_api_branches(*, clear: bool = False, commit: bool = True) -> None:
 
 
 def _refresh_api_branches() -> None:
-    """Refresh PostgreSQL workspace and branch registry across API processes."""
+    """Refresh workspace state and the durable branch registry across transports."""
     if not DATABASE_URL:
-        return
+        # Some library-level API tests inject a bare PersistentWorkspace without
+        # the HTTP adapter's branch table. Preserve their in-memory branch setup.
+        try:
+            workspace._conn.execute("SELECT branch_id FROM api_branches LIMIT 0")
+        except Exception:
+            return
     workspace.refresh()
     _restore_api_branches(clear=True, commit=True)
 
@@ -1144,6 +1149,13 @@ def create_branch(body: BranchCreate, context: dict[str, Any] = Depends(require_
     try:
         with _lock:
             def create_and_persist():
+                existing = workspace._conn.execute(
+                    "SELECT branch_id FROM api_branches "
+                    "WHERE agent_id = ? AND branch_name = ? AND status = 'open'",
+                    (body.agent_id, body.name),
+                ).fetchone()
+                if existing:
+                    raise HTTPException(409, "An open branch with this agent and name already exists")
                 with event_actor(context):
                     branch = workspace._workspace.create_branch(body.agent_id, body.name)
                 item = {
@@ -1155,6 +1167,8 @@ def create_branch(body: BranchCreate, context: dict[str, Any] = Depends(require_
                 _save_api_branch(branch_id, item, commit=False)
                 return _branch_summary(branch_id, item)
             return workspace._mutate(create_and_persist)
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(400, str(exc)) from exc
 
