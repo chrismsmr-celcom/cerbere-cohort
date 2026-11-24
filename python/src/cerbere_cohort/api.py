@@ -151,10 +151,9 @@ def _restore_api_branches(*, clear: bool = False, commit: bool = True) -> None:
 
 
 def _refresh_api_branches() -> None:
-    """Refresh PostgreSQL workspace and branch registry across API processes."""
-    if not DATABASE_URL:
-        return
-    workspace.refresh()
+    """Refresh the durable branch registry for both SQLite and PostgreSQL transports."""
+    if DATABASE_URL:
+        workspace.refresh()
     _restore_api_branches(clear=True, commit=True)
 
 if not DATABASE_URL:
@@ -1162,6 +1161,8 @@ def create_branch(body: BranchCreate, context: dict[str, Any] = Depends(require_
                 _save_api_branch(branch_id, item, commit=False)
                 return _branch_summary(branch_id, item)
             return workspace._mutate(create_and_persist)
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(400, str(exc)) from exc
 
