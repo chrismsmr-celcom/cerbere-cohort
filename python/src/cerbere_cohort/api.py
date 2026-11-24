@@ -828,6 +828,17 @@ def complete_task(
         ))
 
 
+@app.post("/api/tasks/{task_id}/retry")
+def retry_task(
+    task_id: str,
+    context: dict[str, Any] = Depends(require_workspace_write_access),
+):
+    if context.get("principal_type") == "agent":
+        raise HTTPException(403, "Only a workspace user can requeue a failed task")
+    with _lock:
+        return _task_call(lambda: _task_coordinator().retry(task_id))
+
+
 @app.post("/api/tasks/{task_id}/fail")
 def fail_task(
     task_id: str,
