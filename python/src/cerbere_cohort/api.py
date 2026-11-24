@@ -152,6 +152,13 @@ def _restore_api_branches(*, clear: bool = False, commit: bool = True) -> None:
 
 def _refresh_api_branches() -> None:
     """Refresh workspace state and the durable branch registry across transports."""
+    if not DATABASE_URL:
+        # Some library-level API tests inject a bare PersistentWorkspace without
+        # the HTTP adapter's branch table. Preserve their in-memory branch setup.
+        try:
+            workspace._conn.execute("SELECT branch_id FROM api_branches LIMIT 0")
+        except Exception:
+            return
     workspace.refresh()
     _restore_api_branches(clear=True, commit=True)
 
