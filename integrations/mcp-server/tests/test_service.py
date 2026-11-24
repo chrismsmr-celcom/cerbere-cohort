@@ -228,3 +228,51 @@ def test_mcp_task_bound_commit_rejects_stale_owner_without_publishing(tmp_path):
     assert exc.value.code == "task_fenced"
     assert "config" not in service.get_state()["state"]
     service.close()
+
+
+
+def test_legacy_mcp_branch_is_migrated_into_shared_registry(tmp_path):
+    import json
+    from cerbere_cohort.persistence import PersistentWorkspace
+
+    db = tmp_path / "legacy-mcp.db"
+    legacy = PersistentWorkspace(db)
+    base_version = legacy.head.version_id
+    legacy._conn.execute(
+        """
+        CREATE TABLE mcp_branches (
+            agent_id TEXT NOT NULL,
+            branch_name TEXT NOT NULL,
+            base_version TEXT NOT NULL,
+            current_data_json TEXT NOT NULL,
+            intents_json TEXT NOT NULL,
+            fencing_tokens_json TEXT NOT NULL DEFAULT '{}',
+            PRIMARY KEY (agent_id, branch_name)
+        )
+        """
+    )
+    legacy._conn.execute(
+        """
+        INSERT INTO mcp_branches
+            (agent_id, branch_name, base_version, current_data_json,
+             intents_json, fencing_tokens_json)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "agent-legacy", "unfinished", base_version,
+            json.dumps({"preserved": {"from": "old-mcp"}}), "{}", "{}",
+        ),
+    )
+    legacy._conn.commit()
+    legacy.close()
+
+    service = CohortService(db)
+    assert service.read_branch("agent-legacy", "unfinished", "preserved") == {
+        "key": "preserved",
+        "exists": True,
+        "value": {"from": "old-mcp"},
+    }
+    # The old table remains for compatibility, but successfully migrated rows
+    # are removed so a later startup cannot replay stale copies over REST edits.
+    assert service._db.execute("SELECT COUNT(*) AS count FROM mcp_branches").fetchone()["count"] == 0
+    service.close()
