@@ -220,7 +220,7 @@ class CohortService:
         self._migrate_legacy_mcp_branches()
 
     def _migrate_legacy_mcp_branches(self) -> None:
-        """Move pre-unification MCP branches into the REST branch registry once."""
+        """Move legacy MCP branches into the shared registry without losing conflicts."""
         if self.db_path is not None:
             exists = self._db.execute(
                 "SELECT 1 FROM sqlite_master WHERE type='table' AND name='mcp_branches'"
@@ -232,26 +232,61 @@ class CohortService:
             ).fetchone()
         if not exists or (self.db_path is None and not exists["name"]):
             return
-        rows = self._db.execute("SELECT * FROM mcp_branches").fetchall()
-        for row in rows:
-            digest = hashlib.sha256(
-                f"{row['agent_id']}\\0{row['branch_name']}".encode("utf-8")
-            ).hexdigest()[:32]
-            self._db.execute(
-                """
-                INSERT INTO api_branches
-                    (branch_id, agent_id, branch_name, base_version, current_data_json,
-                     intents_json, fencing_tokens_json, status, conflicting_keys_json, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, 'open', '[]', ?)
-                ON CONFLICT(branch_id) DO NOTHING
-                """,
-                (
-                    f"mcp-legacy-{digest}", row["agent_id"], row["branch_name"],
-                    row["base_version"], row["current_data_json"], row["intents_json"],
-                    row["fencing_tokens_json"] or "{}", str(time.time()),
-                ),
-            )
-        self._db.commit()
+
+        self._db.execute("BEGIN IMMEDIATE")
+        try:
+            rows = self._db.execute("SELECT * FROM mcp_branches").fetchall()
+            for row in rows:
+                existing = self._db.execute(
+                    "SELECT * FROM api_branches "
+                    "WHERE agent_id = ? AND branch_name = ? AND status = 'open'",
+                    (row["agent_id"], row["branch_name"]),
+                ).fetchone()
+                legacy_state = (
+                    row["base_version"],
+                    json.loads(row["current_data_json"]),
+                    json.loads(row["intents_json"]),
+                    json.loads(row["fencing_tokens_json"] or "{}"),
+                )
+                if existing:
+                    shared_state = (
+                        existing["base_version"],
+                        json.loads(existing["current_data_json"]),
+                        json.loads(existing["intents_json"]),
+                        json.loads(existing["fencing_tokens_json"] or "{}"),
+                    )
+                    if shared_state != legacy_state:
+                        raise RuntimeError(
+                            "A legacy MCP branch and a REST branch have the same agent/name "
+                            "but different contents. Reconcile the two records before starting MCP."
+                        )
+                else:
+                    digest = hashlib.sha256(
+                        f"{row['agent_id']}\\0{row['branch_name']}".encode("utf-8")
+                    ).hexdigest()[:32]
+                    self._db.execute(
+                        """
+                        INSERT INTO api_branches
+                            (branch_id, agent_id, branch_name, base_version, current_data_json,
+                             intents_json, fencing_tokens_json, status, conflicting_keys_json, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, 'open', '[]', ?)
+                        ON CONFLICT(branch_id) DO NOTHING
+                        """,
+                        (
+                            f"mcp-legacy-{digest}", row["agent_id"], row["branch_name"],
+                            row["base_version"], row["current_data_json"], row["intents_json"],
+                            row["fencing_tokens_json"] or "{}", str(time.time()),
+                        ),
+                    )
+                # The shared row now contains the complete legacy working copy.
+                self._db.execute(
+                    "DELETE FROM mcp_branches WHERE agent_id = ? AND branch_name = ?",
+                    (row["agent_id"], row["branch_name"]),
+                )
+            self._db.commit()
+        except BaseException:
+            self._db.rollback()
+            raise
 
     def _branch_row(self, agent_id: str, branch_name: str):
         rows = self._db.execute(
