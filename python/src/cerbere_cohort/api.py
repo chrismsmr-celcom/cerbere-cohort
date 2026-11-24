@@ -54,7 +54,7 @@ from cerbere_cohort import (
     PreferAgent,
     Resolution,
 )
-from cerbere_cohort.persistence import PersistentWorkspace
+from cerbere_cohort.persistence import PersistentWorkspace, IdempotencyConflict
 
 DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
 DB_PATH = Path(os.getenv("COHORT_DB_PATH", "./data/cohort.db"))
@@ -117,10 +117,11 @@ def _ensure_api_branches_schema(conn, *, postgres: bool) -> None:
 if not DATABASE_URL:
     _ensure_api_branches_schema(workspace._conn, postgres=False)
 
-def _save_api_branch(branch_id: str, item: dict[str, Any]) -> None:
+def _save_api_branch(branch_id: str, item: dict[str, Any], *, commit: bool = True) -> None:
     b = item['branch']
     workspace._conn.execute("INSERT INTO api_branches (branch_id, agent_id, branch_name, base_version, current_data_json, intents_json, fencing_tokens_json, status, conflicting_keys_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(branch_id) DO UPDATE SET current_data_json=excluded.current_data_json, intents_json=excluded.intents_json, fencing_tokens_json=excluded.fencing_tokens_json, status=excluded.status, conflicting_keys_json=excluded.conflicting_keys_json", (branch_id, item['agent_id'], b.name, b.base_version, json.dumps(b.current_data, ensure_ascii=False), json.dumps(b.intents, ensure_ascii=False), json.dumps(b.fencing_tokens, ensure_ascii=False), item['status'], json.dumps(item.get('conflicting_keys', [])), item['created_at']))
-    workspace._conn.commit()
+    if commit:
+        workspace._conn.commit()
 
 def _restore_api_branches() -> None:
     committed = {
@@ -1001,7 +1002,72 @@ def commit_branch(
     branch_id: str,
     context: dict[str, Any] = Depends(require_workspace_write_access),
     body: CommitRequest | None = None,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ):
+    if idempotency_key is not None:
+        key = idempotency_key.strip()
+        if not key or len(key) > 200:
+            raise HTTPException(422, "Idempotency-Key must contain 1 to 200 characters")
+        request_hash = hashlib.sha256(json.dumps({
+            "branch_id": branch_id,
+            "agent_id": context.get("agent_id") or _branches.get(branch_id, {}).get("agent_id"),
+            "expected_head_version": body.expected_head_version if body else None,
+        }, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+
+        def commit_once():
+            # Reload the durable branch row after the DB lock and latest replay.
+            row = workspace._conn.execute(
+                "SELECT * FROM api_branches WHERE branch_id = ?", (branch_id,)
+            ).fetchone()
+            if not row or row["status"] != "open" or not _agent_owns(context, row["agent_id"]):
+                raise HTTPException(404, "Open branch not found")
+            base = workspace._workspace._snapshots.get(row["base_version"])
+            if base is None:
+                raise HTTPException(409, "Branch base snapshot is no longer available")
+            branch = Branch(
+                row["branch_name"], base, workspace._workspace._lease_manager,
+                row["agent_id"], workspace._workspace._require_leases,
+            )
+            branch.current_data = json.loads(row["current_data_json"])
+            branch.intents = json.loads(row["intents_json"])
+            branch.fencing_tokens = json.loads(row["fencing_tokens_json"] or "{}")
+            item = {
+                "branch": branch, "agent_id": row["agent_id"], "status": row["status"],
+                "conflicting_keys": json.loads(row["conflicting_keys_json"]),
+                "created_at": row["created_at"],
+            }
+            _branches[branch_id] = item
+            try:
+                with event_actor(context):
+                    snapshot = workspace._workspace.commit(
+                        item["agent_id"], branch,
+                        expected_head_version=body.expected_head_version if body else None,
+                    )
+                item["status"] = "merged"
+                item["conflicting_keys"] = []
+                _save_api_branch(branch_id, item, commit=False)
+                return {"ok": True, "head": snapshot.version_id, "branch": _branch_summary(branch_id, item)}
+            except ConflictError as exc:
+                item["conflicting_keys"] = list(exc.conflicting_keys)
+                _save_api_branch(branch_id, item, commit=False)
+                return {
+                    "ok": False, "conflict": True, "branch": _branch_summary(branch_id, item),
+                    "conflicting_keys": list(exc.conflicting_keys),
+                    "head_version": exc.details.get("head_version"),
+                    "base_version": exc.details.get("base_version"),
+                    "error_code": exc.code,
+                    "expected_head_version": exc.details.get("expected_head_version"),
+                    "actual_head_version": exc.details.get("actual_head_version"),
+                }
+
+        try:
+            with _lock:
+                return workspace.execute_idempotent(
+                    f"branch:{branch_id}:commit", key, request_hash, commit_once
+                )
+        except IdempotencyConflict as exc:
+            raise HTTPException(409, detail={"code": "idempotency_key_reused", "message": str(exc)}) from exc
+
     with _lock:
         item = _branches.get(branch_id)
         if not item or item["status"] != "open" or not _agent_owns(context, item["agent_id"]):
@@ -1020,9 +1086,7 @@ def commit_branch(
             item["conflicting_keys"] = list(exc.conflicting_keys)
             _save_api_branch(branch_id, item)
             return {
-                "ok": False,
-                "conflict": True,
-                "branch": _branch_summary(branch_id, item),
+                "ok": False, "conflict": True, "branch": _branch_summary(branch_id, item),
                 "conflicting_keys": list(exc.conflicting_keys),
                 "head_version": exc.details.get("head_version"),
                 "base_version": exc.details.get("base_version"),
