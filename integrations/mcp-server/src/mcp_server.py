@@ -468,7 +468,8 @@ class CohortService:
         if not task_id and (task_fencing_token is not None or idempotency_key is not None):
             raise ValueError("Task fencing and idempotency arguments require task_id")
 
-        task_coordinator = self._task_coordinator() if task_id else None
+        with self._lock:
+            task_coordinator = self._task_coordinator() if task_id else None
 
         def commit_once():
             row = self._branch_row(agent_id, branch_name)
@@ -512,62 +513,77 @@ class CohortService:
 
     def create_task(self, title: str, payload: Any, idempotency_key: str | None = None):
         self._require_scope('workspace:write')
-        return self._task_coordinator().create(title, payload, idempotency_key)
+        with self._lock:
+            return self._task_coordinator().create(title, payload, idempotency_key)
 
     def list_tasks(self, limit: int = 100):
         self._require_scope('workspace:read')
-        items = self._task_coordinator().list(limit)
-        principal = _request_principal.get()
-        agent_id = principal["agent_id"] if principal is not None else self.authenticated_agent_id
-        if agent_id:
-            items = [item for item in items if item["status"] == "pending" or item["assigned_agent_id"] == agent_id]
-        return items
+        with self._lock:
+            items = self._task_coordinator().list(limit)
+            principal = _request_principal.get()
+            agent_id = principal["agent_id"] if principal is not None else self.authenticated_agent_id
+            if agent_id:
+                items = [item for item in items if item["status"] == "pending" or item["assigned_agent_id"] == agent_id]
+            return items
 
     def get_task(self, task_id: str):
         self._require_scope('workspace:read')
-        item = self._task_coordinator().get(task_id)
-        principal = _request_principal.get()
-        agent_id = principal["agent_id"] if principal is not None else self.authenticated_agent_id
-        if agent_id and item["status"] != "pending" and item["assigned_agent_id"] != agent_id:
-            raise ValueError("Task not found")
-        return item
+        with self._lock:
+            item = self._task_coordinator().get(task_id)
+            principal = _request_principal.get()
+            agent_id = principal["agent_id"] if principal is not None else self.authenticated_agent_id
+            if agent_id and item["status"] != "pending" and item["assigned_agent_id"] != agent_id:
+                raise ValueError("Task not found")
+            return item
 
     def get_task_events(self, task_id: str):
-        self.get_task(task_id)
-        return self._task_coordinator().events(task_id)
+        self._require_scope('workspace:read')
+        with self._lock:
+            item = self._task_coordinator().get(task_id)
+            principal = _request_principal.get()
+            agent_id = principal["agent_id"] if principal is not None else self.authenticated_agent_id
+            if agent_id and item["status"] != "pending" and item["assigned_agent_id"] != agent_id:
+                raise ValueError("Task not found")
+            return self._task_coordinator().events(task_id)
 
     def claim_task(self, task_id: str, agent_id: str, lease_seconds: float = 60):
         self._require_scope('workspace:write')
         self._assert_agent(agent_id)
-        return self._task_coordinator().claim(task_id, agent_id, lease_seconds)
+        with self._lock:
+            return self._task_coordinator().claim(task_id, agent_id, lease_seconds)
 
     def start_task(self, task_id: str, agent_id: str, fencing_token: int):
         self._require_scope('workspace:write')
         self._assert_agent(agent_id)
-        return self._task_coordinator().start(task_id, agent_id, fencing_token)
+        with self._lock:
+            return self._task_coordinator().start(task_id, agent_id, fencing_token)
 
     def heartbeat_task(self, task_id: str, agent_id: str, fencing_token: int,
                        lease_seconds: float = 60):
         self._require_scope('workspace:write')
         self._assert_agent(agent_id)
-        return self._task_coordinator().heartbeat(task_id, agent_id, fencing_token, lease_seconds)
+        with self._lock:
+            return self._task_coordinator().heartbeat(task_id, agent_id, fencing_token, lease_seconds)
 
     def complete_task(self, task_id: str, agent_id: str, fencing_token: int,
                       result: Any, idempotency_key: str):
         self._require_scope('workspace:write')
         self._assert_agent(agent_id)
-        return self._task_coordinator().complete(
-            task_id, agent_id, fencing_token, result, idempotency_key
-        )
+        with self._lock:
+            return self._task_coordinator().complete(
+                task_id, agent_id, fencing_token, result, idempotency_key
+            )
 
     def fail_task(self, task_id: str, agent_id: str, fencing_token: int, error: str):
         self._require_scope('workspace:write')
         self._assert_agent(agent_id)
-        return self._task_coordinator().fail(task_id, agent_id, fencing_token, error)
+        with self._lock:
+            return self._task_coordinator().fail(task_id, agent_id, fencing_token, error)
 
     def retry_task(self, task_id: str):
         self._require_scope('tasks:admin')
-        return self._task_coordinator().retry(task_id)
+        with self._lock:
+            return self._task_coordinator().retry(task_id)
 
     def acquire_lease(
         self, agent_id: str, resource_key: str, duration_seconds: float = 30.0
