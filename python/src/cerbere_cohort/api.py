@@ -32,7 +32,6 @@ from cerbere_cohort.observability import (
 from cerbere_cohort.email import (
     EmailDeliveryError,
     build_workspace_invitation_url,
-    resend_is_configured,
     send_workspace_invitation_email,
 )
 from cerbere_cohort.auth import (
