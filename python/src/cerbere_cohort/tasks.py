@@ -244,6 +244,8 @@ class TaskCoordinator:
         try:
             row = self._row(task_id)
             if row["status"] == "completed":
+                if row["assigned_agent_id"] != agent_id or int(row["fencing_token"]) != int(fencing_token):
+                    raise TaskError("Stale task owner or fencing token", code="task_fenced")
                 if row["completion_key"] == idempotency_key and row["result_hash"] == result_hash:
                     self._conn.commit()
                     return self._serialize(row)
