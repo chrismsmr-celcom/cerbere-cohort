@@ -7,12 +7,19 @@ const empty: Data = {
   connected: false, loaded: false, error: "", lastUpdated: null,
 };
 
-/** Polls the Cohort API every 5 s (paused while the tab is hidden). Never fabricates data. */
+const POLL_INTERVAL_MS = 30_000;
+const RETRY_INTERVAL_MS = 60_000;
+
+/**
+ * Refreshes data without reloading the page. Polling is deliberately slow,
+ * sequential, and paused while the browser tab is hidden.
+ */
 export function useCohort() {
   const [data, setData] = useState<Data>(empty);
   const inFlight = useRef(false);
-  const refresh = useCallback(async () => {
-    if (inFlight.current) return;
+
+  const refresh = useCallback(async (): Promise<boolean> => {
+    if (inFlight.current) return false;
     inFlight.current = true;
     try {
       const [overview, branches, state, events, leases, settings, health] = await Promise.all([
@@ -20,50 +27,118 @@ export function useCohort() {
         api<{ items: EventItem[] }>("/events?limit=300"), api<{ items: Lease[] }>("/leases"), api<Settings>("/settings"),
         api<Health>("/health").catch(() => null),
       ]);
-      setData({ overview, branches: branches.items, state, events: events.items, leases: leases.items, settings, health, connected: true, loaded: true, error: "", lastUpdated: Date.now() });
+      setData({
+        overview, branches: branches.items, state, events: events.items, leases: leases.items,
+        settings, health, connected: true, loaded: true, error: "", lastUpdated: Date.now(),
+      });
+      return true;
     } catch (err) {
-      setData((prev) => ({ ...prev, connected: false, loaded: true, error: err instanceof Error ? err.message : "Unable to reach Cohort API" }));
+      setData((prev) => ({
+        ...prev,
+        connected: false,
+        loaded: true,
+        error: err instanceof Error ? err.message : "Unable to reach Cohort API",
+      }));
+      return false;
     } finally {
       inFlight.current = false;
     }
   }, []);
+
   useEffect(() => {
-    void refresh();
-    const tick = () => { if (!document.hidden) void refresh(); };
-    const id = window.setInterval(tick, 5000);
-    document.addEventListener("visibilitychange", tick);
-    return () => { window.clearInterval(id); document.removeEventListener("visibilitychange", tick); };
+    let active = true;
+    let timer: number | undefined;
+
+    const clearTimer = () => {
+      if (timer !== undefined) {
+        window.clearTimeout(timer);
+        timer = undefined;
+      }
+    };
+
+    const poll = async () => {
+      if (!active || document.hidden) return;
+      const succeeded = await refresh();
+      if (!active || document.hidden) return;
+      timer = window.setTimeout(poll, succeeded ? POLL_INTERVAL_MS : RETRY_INTERVAL_MS);
+    };
+
+    const onVisibilityChange = () => {
+      clearTimer();
+      if (!document.hidden) void poll();
+    };
+
+    void poll();
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      active = false;
+      clearTimer();
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
   }, [refresh]);
+
   return { data, refresh };
 }
 
 export type Optional<T> = { status: "loading" | "ready" | "unavailable" | "error"; data: T | null; error: string; reload: () => void };
 
-/** For endpoints that may not exist yet: a 404/405/501 becomes status "unavailable" (no polling, no fake data). */
+/** Optional endpoints: unsupported responses become unavailable; polling pauses while the tab is hidden. */
 export function useOptional<T>(path: string | null, intervalMs = 0): Optional<T> {
   const [state, setState] = useState<{ status: Optional<T>["status"]; data: T | null; error: string }>({ status: "loading", data: null, error: "" });
   const [nonce, setNonce] = useState(0);
+
   useEffect(() => {
     if (!path) return;
     let active = true;
-    let timer = 0;
-    setState((prev) => (prev.status === "ready" ? prev : { status: "loading", data: null, error: "" }));
-    const load = async () => {
+    let timer: number | undefined;
+
+    const clearTimer = () => {
+      if (timer !== undefined) {
+        window.clearTimeout(timer);
+        timer = undefined;
+      }
+    };
+
+    let load: () => Promise<void> = async () => {};
+
+    const schedule = (delay: number) => {
+      if (active && intervalMs && !document.hidden) {
+        clearTimer();
+        timer = window.setTimeout(load, delay);
+      }
+    };
+
+    load = async () => {
+      if (!active || document.hidden) return;
       try {
         const data = await api<T>(path);
-        if (active) setState({ status: "ready", data, error: "" });
-        if (active && intervalMs) timer = window.setTimeout(load, intervalMs);
+        if (!active) return;
+        setState({ status: "ready", data, error: "" });
+        schedule(intervalMs);
       } catch (err) {
         if (!active) return;
-        if (isUnavailable(err)) setState({ status: "unavailable", data: null, error: "" });
-        else {
+        if (isUnavailable(err)) {
+          setState({ status: "unavailable", data: null, error: "" });
+        } else {
           setState((prev) => ({ status: "error", data: prev.data, error: err instanceof Error ? err.message : "Request failed" }));
-          if (intervalMs) timer = window.setTimeout(load, intervalMs * 2);
+          schedule(intervalMs * 2);
         }
       }
     };
+
+    const onVisibilityChange = () => {
+      clearTimer();
+      if (!document.hidden) void load();
+    };
+
     void load();
-    return () => { active = false; window.clearTimeout(timer); };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      active = false;
+      clearTimer();
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
   }, [path, intervalMs, nonce]);
+
   return { ...state, reload: () => setNonce((n) => n + 1) };
 }
