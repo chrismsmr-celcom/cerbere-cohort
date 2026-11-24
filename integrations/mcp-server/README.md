@@ -140,10 +140,10 @@ the configured organization.
 
 ### Recommended agent workflow
 
-1. Choose a stable, unique `agent_id` (for example, `cursor` or `codex`).
-2. Create a branch before editing shared state.
-3. Claim a task and keep its fencing token while working.
-4. Create a branch and read the keys you intend to change.
+1. Use the `agent_id` bound to your credential.
+2. Claim a task and keep its fencing token while working.
+3. Create a branch for the task and read the keys you intend to change.
+4. Acquire resource leases before changing protected keys.
 5. Write changes to that branch; do not write directly to HEAD.
 6. Commit with `task_id`, `task_fencing_token`, and an `idempotency_key` to publish the branch and complete the task atomically.
 7. If the commit reports a conflict, read the latest HEAD and reconcile explicitly. Do not blindly retry with stale values.
@@ -151,10 +151,18 @@ the configured organization.
 Example tool sequence:
 
 ```text
+task_claim(task_id="...", agent_id="cursor", lease_seconds=120)
+task_start(task_id="...", agent_id="cursor", fencing_token=1)
 workspace_create_branch(agent_id="cursor", branch_name="auth-refactor")
 workspace_read_in_branch(agent_id="cursor", branch_name="auth-refactor", key="architecture")
 workspace_set_in_branch(agent_id="cursor", branch_name="auth-refactor", key="architecture", value={"owner": "cursor"})
-workspace_commit(agent_id="cursor", branch_name="auth-refactor")
+workspace_commit(
+  agent_id="cursor",
+  branch_name="auth-refactor",
+  task_id="...",
+  task_fencing_token=1,
+  idempotency_key="auth-refactor-completion"
+)
 ```
 
 ## Stdio mode
