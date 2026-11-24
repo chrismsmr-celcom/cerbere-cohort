@@ -530,8 +530,6 @@ class CohortService:
 
     def retry_task(self, task_id: str):
         self._require_scope('tasks:admin')
-        if self.authenticated_agent_id or _request_principal.get() is not None:
-            raise MCPAuthorizationError("Only a workspace user can requeue a failed task")
         return self._task_coordinator().retry(task_id)
 
     def acquire_lease(
