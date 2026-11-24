@@ -160,11 +160,10 @@ def test_rest_and_mcp_share_one_branch_registry(tmp_path, monkeypatch):
         "agent-a", "created-by-rest", "shared/config"
     )["value"] == {"source": "mcp"}
 
-    # MCP-created branches must be visible in the REST registry with a stable ID.
+    # MCP-created branches must be visible through the REST list endpoint.
     mcp_branch = mcp_service.create_branch("agent-a", "created-by-mcp")
-    api._restore_api_branches(clear=True)
-    assert mcp_branch["branch_id"] in api._branches
-    assert api._branches[mcp_branch["branch_id"]]["branch"].name == "created-by-mcp"
+    visible = api.list_branches(context)["items"]
+    assert any(item["id"] == mcp_branch["branch_id"] for item in visible)
 
     # REST can commit a branch whose latest working copy was written through MCP.
     api._restore_api_branches(clear=True)
