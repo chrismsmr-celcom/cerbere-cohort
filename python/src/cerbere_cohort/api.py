@@ -1144,6 +1144,13 @@ def create_branch(body: BranchCreate, context: dict[str, Any] = Depends(require_
     try:
         with _lock:
             def create_and_persist():
+                existing = workspace._conn.execute(
+                    "SELECT branch_id FROM api_branches "
+                    "WHERE agent_id = ? AND branch_name = ? AND status = 'open'",
+                    (body.agent_id, body.name),
+                ).fetchone()
+                if existing:
+                    raise HTTPException(409, "An open branch with this agent and name already exists")
                 with event_actor(context):
                     branch = workspace._workspace.create_branch(body.agent_id, body.name)
                 item = {
