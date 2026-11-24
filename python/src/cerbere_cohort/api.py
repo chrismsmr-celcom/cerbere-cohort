@@ -1227,23 +1227,24 @@ def commit_branch(
         except IdempotencyConflict as exc:
             raise HTTPException(409, detail={"code": "idempotency_key_reused", "message": str(exc)}) from exc
 
-    with _lock:
+    def commit_without_key():
+        _restore_api_branches(clear=True, commit=False)
         item = _branches.get(branch_id)
         if not item or item["status"] != "open" or not _agent_owns(context, item["agent_id"]):
             raise HTTPException(404, "Open branch not found")
         try:
             with event_actor(context):
-                snapshot = workspace.commit(
+                snapshot = workspace._workspace.commit(
                     item["agent_id"], item["branch"],
                     expected_head_version=body.expected_head_version if body else None,
                 )
             item["status"] = "merged"
             item["conflicting_keys"] = []
-            _save_api_branch(branch_id, item)
+            _save_api_branch(branch_id, item, commit=False)
             return {"ok": True, "head": snapshot.version_id, "branch": _branch_summary(branch_id, item)}
         except ConflictError as exc:
             item["conflicting_keys"] = list(exc.conflicting_keys)
-            _save_api_branch(branch_id, item)
+            _save_api_branch(branch_id, item, commit=False)
             return {
                 "ok": False, "conflict": True, "branch": _branch_summary(branch_id, item),
                 "conflicting_keys": list(exc.conflicting_keys),
@@ -1253,6 +1254,9 @@ def commit_branch(
                 "expected_head_version": exc.details.get("expected_head_version"),
                 "actual_head_version": exc.details.get("actual_head_version"),
             }
+
+    with _lock:
+        return workspace._mutate(commit_without_key)
 
 
 @app.get("/api/branches/{branch_id}/conflict")
