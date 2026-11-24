@@ -154,3 +154,42 @@ def test_smtp_delivery_rejects_invalid_port(monkeypatch):
         assert "port" in str(exc).lower()
     else:
         raise AssertionError("Invalid SMTP port must fail closed")
+
+
+
+def test_smtp_delivery_reuses_existing_resend_api_key(monkeypatch):
+    import cerbere_cohort.email as email
+
+    monkeypatch.delenv("RESEND_SMTP_PASSWORD", raising=False)
+    monkeypatch.setenv("RESEND_API_KEY", "re_existing_api_key")
+    monkeypatch.setenv("RESEND_SMTP_PORT", "465")
+    captured = {}
+
+    class FakeSMTP:
+        def __init__(self, host, port, timeout, context):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def ehlo(self):
+            pass
+
+        def login(self, username, password):
+            captured["credentials"] = (username, password)
+
+        def send_message(self, message):
+            pass
+
+    monkeypatch.setattr(email.smtplib, "SMTP_SSL", FakeSMTP)
+    assert email.smtp_is_configured() is True
+    send_workspace_invitation_email(
+        to_email="member@example.com",
+        invite_url="https://cohort.example/app?invite=token123",
+        role="member",
+        workspace_name="Research Team",
+    )
+    assert captured["credentials"] == ("resend", "re_existing_api_key")
