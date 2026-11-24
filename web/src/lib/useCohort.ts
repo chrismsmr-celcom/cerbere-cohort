@@ -99,6 +99,8 @@ export function useOptional<T>(path: string | null, intervalMs = 0): Optional<T>
       }
     };
 
+    let load: () => Promise<void> = async () => {};
+
     const schedule = (delay: number) => {
       if (active && intervalMs && !document.hidden) {
         clearTimer();
@@ -106,7 +108,7 @@ export function useOptional<T>(path: string | null, intervalMs = 0): Optional<T>
       }
     };
 
-    const load = async () => {
+    load = async () => {
       if (!active || document.hidden) return;
       try {
         const data = await api<T>(path);
