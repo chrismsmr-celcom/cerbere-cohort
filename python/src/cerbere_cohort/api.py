@@ -1168,9 +1168,6 @@ def commit_branch(
             raise HTTPException(422, "Idempotency-Key must contain 1 to 200 characters")
         request_hash = hashlib.sha256(json.dumps({
             "branch_id": branch_id,
-            "agent_id": context.get("agent_id") or (workspace._conn.execute(
-                "SELECT agent_id FROM api_branches WHERE branch_id = ?", (branch_id,)
-            ).fetchone() or {}).get("agent_id"),
             "expected_head_version": body.expected_head_version if body else None,
         }, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
 
