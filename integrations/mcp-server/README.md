@@ -3,17 +3,19 @@
 Cerbere Cohort exposes shared workspace coordination to MCP-compatible coding
 agents. Run **one server process** and connect multiple clients to the same
 Streamable HTTP endpoint. The server serializes workspace mutations and stores
-committed state, leases, events, and open branches in SQLite.
+committed state, leases, events, open branches, and tasks in SQLite.
 
 ## What it provides
 
 - Shared committed workspace state and versioned HEAD.
-- Isolated branches per `agent_id` and `branch_name`.
+- Isolated branches per `agent_id` and `branch_name`, stored in the same durable registry as REST API branches.
 - Branch reads, writes, and deletes.
 - Conflict-aware commits: overlapping edits are rejected rather than silently
   overwriting another agent's changes; disjoint edits can merge.
 - SQLite persistence, including unfinished branch state across server restarts.
 - Resource leases with renewal, fencing tokens, and an append-only event log.
+- Durable task lifecycle (`pending → assigned → running → completed/failed`) with task leases and fencing tokens.
+- Atomic task-bound branch commits: stale task owners cannot publish workspace state.
 - Streamable HTTP for multiple clients, plus stdio for single-client setups.
 
 ## Requirements
@@ -121,7 +123,17 @@ the configured organization.
 | `workspace_read_in_branch` | Read a key from a branch |
 | `workspace_set_in_branch` | Set a JSON value in a branch |
 | `workspace_delete_in_branch` | Delete a key in a branch |
-| `workspace_commit` | Commit a branch with conflict detection |
+| `workspace_commit` | Commit a branch with conflict detection; optionally complete its task atomically |
+| `task_create` | Create a durable task |
+| `task_list` | List pending and assigned tasks visible to the agent |
+| `task_get` | Read a visible task |
+| `task_events` | Read task lifecycle events |
+| `task_claim` | Claim a task and receive its fencing token |
+| `task_start` | Start an assigned task |
+| `task_heartbeat` | Renew a task lease |
+| `task_complete` | Complete a task idempotently |
+| `task_fail` | Fail an active task |
+| `task_retry` | Requeue a failed task; requires `tasks:admin` scope |
 | `lease_acquire` | Acquire a time-limited resource lease |
 | `lease_release` | Release a lease owned by an agent |
 | `get_events` | Read recent coordination events |
@@ -130,11 +142,11 @@ the configured organization.
 
 1. Choose a stable, unique `agent_id` (for example, `cursor` or `codex`).
 2. Create a branch before editing shared state.
-3. Read the keys you intend to change.
-4. Write changes to that branch; do not write directly to HEAD.
-5. Commit when the work is ready.
-6. If the commit reports a conflict, read the latest HEAD and reconcile
-   explicitly. Do not blindly retry with stale values.
+3. Claim a task and keep its fencing token while working.
+4. Create a branch and read the keys you intend to change.
+5. Write changes to that branch; do not write directly to HEAD.
+6. Commit with `task_id`, `task_fencing_token`, and an `idempotency_key` to publish the branch and complete the task atomically.
+7. If the commit reports a conflict, read the latest HEAD and reconcile explicitly. Do not blindly retry with stale values.
 
 Example tool sequence:
 
