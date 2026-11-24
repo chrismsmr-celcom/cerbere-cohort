@@ -335,6 +335,14 @@ class PersistentWorkspace:
                 raise
             except BaseException:
                 self._conn.rollback()
+                # The in-memory workspace may already have been mutated before
+                # a later guard (for example task fencing) rejects publication.
+                # Rebuild it from the rolled-back journal so this process cannot
+                # observe state that was never committed to durable storage.
+                try:
+                    self._load_from_db()
+                except Exception:
+                    pass
                 raise
 
     # === Méthodes de persistance ===
