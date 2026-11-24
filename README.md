@@ -338,8 +338,8 @@ Cohort is under active development. The current implementation includes the key-
 A few implementation details matter when evaluating the current release:
 
 - Multiple organizations are isolated into separate PostgreSQL schemas, but the hosted API must run as one instance and one Uvicorn worker because runtime and branch registries are process-local.
-- The MCP server uses a separate branch registry from the REST API.
-- The hosted MCP server supports authenticated Streamable HTTP. Its branch registry remains separate from the REST API registry, so do not write through both transports to the same workspace during a test.
+- REST and MCP use the same durable branch registry (`api_branches`) within each workspace schema. A branch created or updated through either transport is visible through the other.
+- The hosted MCP server supports authenticated Streamable HTTP. Both transports share the workspace journal, branch records, leases, and durable task state; task-bound commits complete the task in the same database transaction as the branch publication.
 - The workspace is key-value based. Conflict detection operates at key granularity.
 - The Rust trace analyzer is an early tool for basic JSONL analysis.
 - Agent credentials are bound to an agent identity, and audit events distinguish the authenticated actor from the target agent. Cohort does not provide external tool authorization or code sandboxing.
@@ -352,7 +352,6 @@ The hosted API's route definitions and request/response models in the source cod
 We are working toward stronger coordination across agent runtimes and deployment environments, including:
 
 - Fencing-token enforcement at the storage boundary to reject writes from stale lease holders.
-- A unified branch and coordination model across REST and MCP.
 - More granular agent scopes and delegated permission controls.
 - Document-oriented workspaces and richer shared resources.
 - Multi-instance coordination behind a shared runtime and branch registry.
