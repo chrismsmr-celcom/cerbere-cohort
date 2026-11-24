@@ -57,8 +57,10 @@ jobs:
           python-version: "3.12"
       - name: Install PostgreSQL test dependencies
         run: python -m pip install -e "./python[dev,postgres]"
+      - name: Install MCP server for cross-transport integration tests
+        run: python -m pip install -e "./integrations/mcp-server"
       - name: Apply every Supabase migration and test tenant isolation
-        run: python -m pytest python/tests/test_postgres_live_integration.py python/tests/test_postgres_task_coordination.py -q
+        run: python -m pytest python/tests/test_postgres_live_integration.py python/tests/test_postgres_task_coordination.py integrations/mcp-server/tests/test_postgres_shared_registry.py -q
 
   rust:
     name: Rust trace analyzer
