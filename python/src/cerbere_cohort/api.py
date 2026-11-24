@@ -1397,9 +1397,6 @@ def create_organization_invitation(
     context: dict[str, Any] = Depends(require_workspace_member),
 ):
     _require_admin(context)
-    if not resend_is_configured():
-        raise HTTPException(status_code=503, detail="Workspace invitation email is not configured (RESEND_API_KEY is missing)")
-
     token = secrets.token_urlsafe(32)
     token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
     expires_at = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=body.expires_in_days)
@@ -1433,21 +1430,20 @@ def create_organization_invitation(
             workspace_name=workspace_name,
         )
     except EmailDeliveryError as exc:
-        try:
-            db.execute(
-                """UPDATE public.cohort_invitations SET revoked_at = now()
-                   WHERE id = ? AND organization_id = ? AND accepted_at IS NULL""",
-                (str(row["id"]), context["organization_id"]),
-            )
-            db.commit()
-        except Exception:
-            db.rollback()
-            logger.exception("Failed to revoke invitation after email delivery failure")
-        logger.warning("Workspace invitation email failed (%s)", type(exc).__name__)
-        raise HTTPException(
-            status_code=502,
-            detail="Invitation email could not be sent. The invitation was revoked; verify Resend sender configuration and retry.",
-        ) from exc
+        # Email is a notification channel, not a prerequisite for workspace access.
+        # Keep the invitation valid and return its one-time token so the admin can
+        # copy the link or retry delivery without recreating the invitation.
+        logger.warning("Workspace invitation email delivery failed: %s", str(exc))
+        return {
+            "id": str(row["id"]),
+            "email": row["email"],
+            "role": row["role"],
+            "expires_at": row["expires_at"],
+            "created_at": row["created_at"],
+            "token": token,
+            "email_sent": False,
+            "email_error": "Email delivery failed. The invitation is still valid; copy the link or retry.",
+        }
 
     return {
         "id": str(row["id"]),
@@ -1467,9 +1463,6 @@ def resend_organization_invitation(
     context: dict[str, Any] = Depends(require_workspace_member),
 ):
     _require_admin(context)
-    if not resend_is_configured():
-        raise HTTPException(status_code=503, detail="Workspace invitation email is not configured (RESEND_API_KEY is missing)")
-
     db = _invitation_db()
     row = db.execute(
         """SELECT i.id, i.email, i.role, i.token_hash, i.expires_at, o.name AS workspace_name
@@ -1509,27 +1502,23 @@ def resend_organization_invitation(
             workspace_name=row["workspace_name"],
         )
     except EmailDeliveryError as exc:
-        try:
-            db.execute(
-                """UPDATE public.cohort_invitations SET token_hash = ?, expires_at = ?
-                   WHERE id = ? AND organization_id = ? AND accepted_at IS NULL AND revoked_at IS NULL
-                     AND token_hash = ?""",
-                (previous_hash, previous_expiry, str(invitation_id), context["organization_id"], token_hash),
-            )
-            db.commit()
-        except Exception:
-            db.rollback()
-            logger.exception("Failed to restore invitation after resend failure")
-        logger.warning("Workspace invitation resend failed (%s)", type(exc).__name__)
-        raise HTTPException(
-            status_code=502,
-            detail="Invitation email could not be resent. The previous invitation link remains valid if restoration succeeded.",
-        ) from exc
+        # Keep the newly rotated token valid and return it to the admin as a
+        # manual-delivery fallback. Never make email delivery block access.
+        logger.warning("Workspace invitation resend failed: %s", str(exc))
+        return {
+            "resent": False,
+            "email": row["email"],
+            "expires_at": expires_at.isoformat(),
+            "token": token,
+            "email_sent": False,
+            "email_error": "Email delivery failed. The new invitation link is still valid; copy it below.",
+        }
 
     return {
         "resent": True,
         "email": row["email"],
         "expires_at": expires_at.isoformat(),
+        "token": token,
         "email_sent": True,
         "email_id": email_id,
     }
