@@ -337,7 +337,7 @@ Cohort is under active development. The current implementation includes the key-
 
 A few implementation details matter when evaluating the current release:
 
-- Multiple organizations are isolated into separate PostgreSQL schemas, but the hosted API must run as one instance and one Uvicorn worker because runtime and branch registries are process-local.
+- Multiple organizations are isolated into separate PostgreSQL schemas. Runtime objects are process-local caches; the workspace journal, branch registry, leases, and task records are durable and coordinated through database transactions.
 - REST and MCP use the same durable branch registry (`api_branches`) within each workspace schema. A branch created or updated through either transport is visible through the other.
 - The hosted MCP server supports authenticated Streamable HTTP. Both transports share the workspace journal, branch records, leases, and durable task state; task-bound commits complete the task in the same database transaction as the branch publication.
 - The workspace is key-value based. Conflict detection operates at key granularity.
