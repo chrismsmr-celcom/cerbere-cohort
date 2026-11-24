@@ -621,6 +621,14 @@ class BranchWrite(BaseModel):
 class CommitRequest(BaseModel):
     # Exact snapshot version read when the branch was created.
     expected_head_version: str | None = Field(default=None, min_length=64, max_length=64)
+    task_id: str | None = Field(default=None, min_length=1, max_length=120)
+    task_fencing_token: int | None = Field(default=None, ge=1)
+
+    @model_validator(mode="after")
+    def _require_task_fencing_pair(self):
+        if bool(self.task_id) != (self.task_fencing_token is not None):
+            raise ValueError("task_id and task_fencing_token must be supplied together")
+        return self
 
 
 class LeaseRequest(BaseModel):
@@ -1174,9 +1182,14 @@ def commit_branch(
         key = idempotency_key.strip()
         if not key or len(key) > 200:
             raise HTTPException(422, "Idempotency-Key must contain 1 to 200 characters")
+        if body and body.task_id and not key:
+            raise HTTPException(422, "Task-bound commits require an Idempotency-Key")
+        task_coordinator = _task_coordinator() if body and body.task_id else None
         request_hash = hashlib.sha256(json.dumps({
             "branch_id": branch_id,
             "expected_head_version": body.expected_head_version if body else None,
+            "task_id": body.task_id if body else None,
+            "task_fencing_token": body.task_fencing_token if body else None,
         }, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
 
         def commit_once():
@@ -1208,6 +1221,11 @@ def commit_branch(
                         item["agent_id"], branch,
                         expected_head_version=body.expected_head_version if body else None,
                     )
+                if task_coordinator is not None:
+                    task_coordinator.complete_in_transaction(
+                        body.task_id, item["agent_id"], body.task_fencing_token,
+                        {"branch_id": branch_id, "head": snapshot.version_id}, key,
+                    )
                 item["status"] = "merged"
                 item["conflicting_keys"] = []
                 _save_api_branch(branch_id, item, commit=False)
@@ -1232,6 +1250,11 @@ def commit_branch(
                 )
         except IdempotencyConflict as exc:
             raise HTTPException(409, detail={"code": "idempotency_key_reused", "message": str(exc)}) from exc
+        except TaskError as exc:
+            raise HTTPException(exc.status_code, detail={"code": exc.code, "message": str(exc)}) from exc
+
+    if body and body.task_id:
+        raise HTTPException(422, "Task-bound commits require an Idempotency-Key")
 
     def commit_without_key():
         _restore_api_branches(clear=True, commit=False)
