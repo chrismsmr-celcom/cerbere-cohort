@@ -233,36 +233,46 @@ class TaskCoordinator:
             self._conn.rollback()
             raise
 
-    def complete(self, task_id: str, agent_id: str, fencing_token: int,
-                 result: Any, idempotency_key: str):
+    def complete_in_transaction(self, task_id: str, agent_id: str, fencing_token: int,
+                                 result: Any, idempotency_key: str):
+        """Complete a task inside a caller-owned transaction.
+
+        This lets a branch commit and its task completion share one atomic
+        transaction, so a stale task owner cannot publish workspace state.
+        """
         if not idempotency_key or len(idempotency_key) > 200:
             raise TaskError("A completion idempotency key is required", code="invalid_idempotency_key", status_code=422)
         result_json = _json(result)
         result_hash = _hash(result)
         now = time.time()
+        row = self._row(task_id)
+        if row["status"] == "completed":
+            if row["assigned_agent_id"] != agent_id or int(row["fencing_token"]) != int(fencing_token):
+                raise TaskError("Stale task owner or fencing token", code="task_fenced")
+            if row["completion_key"] == idempotency_key and row["result_hash"] == result_hash:
+                return self._serialize(row)
+            raise TaskError("Task was already completed with a different result", code="task_already_completed")
+        row = self._owned(task_id, agent_id, fencing_token, now)
+        if row["status"] != "running":
+            raise TaskError("Only a running task can complete", code="invalid_task_transition")
+        self._conn.execute(
+            """UPDATE agent_tasks SET status = 'completed', result_json = ?,
+               result_hash = ?, completion_key = ?, lease_expires_at = NULL,
+               updated_at = ? WHERE task_id = ?""",
+            (result_json, result_hash, idempotency_key, now, task_id),
+        )
+        self._event(task_id, agent_id, "task.completed", fencing_token, {"result_hash": result_hash})
+        return self._serialize(self._row(task_id))
+
+    def complete(self, task_id: str, agent_id: str, fencing_token: int,
+                 result: Any, idempotency_key: str):
         self._begin()
         try:
-            row = self._row(task_id)
-            if row["status"] == "completed":
-                if row["assigned_agent_id"] != agent_id or int(row["fencing_token"]) != int(fencing_token):
-                    raise TaskError("Stale task owner or fencing token", code="task_fenced")
-                if row["completion_key"] == idempotency_key and row["result_hash"] == result_hash:
-                    self._conn.commit()
-                    return self._serialize(row)
-                raise TaskError("Task was already completed with a different result", code="task_already_completed")
-            row = self._owned(task_id, agent_id, fencing_token, now)
-            if row["status"] != "running":
-                raise TaskError("Only a running task can complete", code="invalid_task_transition")
-            self._conn.execute(
-                """UPDATE agent_tasks SET status = 'completed', result_json = ?,
-                   result_hash = ?, completion_key = ?, lease_expires_at = NULL,
-                   updated_at = ? WHERE task_id = ?""",
-                (result_json, result_hash, idempotency_key, now, task_id),
+            completed = self.complete_in_transaction(
+                task_id, agent_id, fencing_token, result, idempotency_key
             )
-            self._event(task_id, agent_id, "task.completed", fencing_token, {"result_hash": result_hash})
-            completed = self._row(task_id)
             self._conn.commit()
-            return self._serialize(completed)
+            return completed
         except BaseException:
             self._conn.rollback()
             raise
