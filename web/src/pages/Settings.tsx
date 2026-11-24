@@ -5,6 +5,7 @@ import { getActiveWorkspaceId } from "../auth";
 import { Card, Disconnected, Empty, PageHead, Seg, TableSkeleton, Tag, useToast } from "../components/ui";
 import type { SidebarMode } from "../components/Sidebar";
 import type { Ctx } from "./ctx";
+import AgentCredentials from "./AgentCredentials";
 
 const Line = ({ label, value }: { label: string; value: string }) => <div className="kv"><span>{label}</span><span className="data">{value}</span></div>;
 
@@ -273,6 +274,7 @@ export default function Settings({ ctx, dark, setDark, mode, setMode, canManageT
         <a href="#settings-readiness">Deployment</a>
         <a href="#settings-members">Members</a>
         <a href="#settings-invitations">Invitations</a>
+        {canManageTeam && <a href="#settings-agent-credentials">Agent credentials</a>}
         <a href="#settings-storage">Storage</a>
         <a href="#settings-runtime">Runtime</a>
         <a href="#settings-observability">External observability</a>
@@ -338,6 +340,8 @@ export default function Settings({ ctx, dark, setDark, mode, setMode, canManageT
       </> : <Card id="settings-members" className="c12" title="Workspace access" description="Team management is restricted to workspace owners and admins.">
         <div className="notice" style={{ margin: 16 }}>Your current role does not have permission to view the member directory or manage invitations. Ask a workspace owner or admin to manage access.</div>
       </Card>}
+      {canManageTeam && <AgentCredentials />}
+
       <Card id="settings-storage" className="c6" title="Storage and coordination" description="Reported by /api/settings">
         <Line label="Storage backend" value={s?.persistence || "—"} /><Line label="Database path" value={s?.database_path || "—"} />
         <Line label="Lease enforcement" value={s ? (s.require_leases ? "Required for writes" : "Advisory") : "—"} />
