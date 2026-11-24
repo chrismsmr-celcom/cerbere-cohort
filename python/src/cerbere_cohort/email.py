@@ -22,7 +22,7 @@ class EmailDeliveryError(RuntimeError):
 
 
 def smtp_is_configured() -> bool:
-    return bool(os.getenv("RESEND_SMTP_PASSWORD", "").strip())
+    return bool((os.getenv("RESEND_SMTP_PASSWORD") or os.getenv("RESEND_API_KEY") or "").strip())
 
 
 def build_workspace_invitation_url(token: str) -> str:
@@ -50,11 +50,13 @@ def send_workspace_invitation_email(
     except ValueError:
         raise EmailDeliveryError("RESEND_SMTP_PORT must be a valid port number") from None
     username = os.getenv("RESEND_SMTP_USERNAME", DEFAULT_SMTP_USERNAME).strip() or DEFAULT_SMTP_USERNAME
-    password = os.getenv("RESEND_SMTP_PASSWORD", "").strip()
+    # Resend's SMTP password is the API key. Prefer an explicitly named SMTP
+    # secret, but reuse the existing RESEND_API_KEY to avoid duplicate secrets.
+    password = (os.getenv("RESEND_SMTP_PASSWORD") or os.getenv("RESEND_API_KEY") or "").strip()
     from_email = os.getenv("RESEND_FROM_EMAIL", DEFAULT_FROM_EMAIL).strip()
 
     if not password:
-        raise EmailDeliveryError("RESEND_SMTP_PASSWORD is not configured")
+        raise EmailDeliveryError("Set RESEND_SMTP_PASSWORD or RESEND_API_KEY to the Resend API key")
     if not 1 <= port <= 65535:
         raise EmailDeliveryError("RESEND_SMTP_PORT must be between 1 and 65535")
     if not from_email:
