@@ -27,9 +27,22 @@ export function useCohort() {
         api<{ items: EventItem[] }>("/events?limit=300"), api<{ items: Lease[] }>("/leases"), api<Settings>("/settings"),
         api<Health>("/health").catch(() => null),
       ]);
-      setData({
+      const next = {
         overview, branches: branches.items, state, events: events.items, leases: leases.items,
-        settings, health, connected: true, loaded: true, error: "", lastUpdated: Date.now(),
+        settings, health, connected: true, loaded: true, error: "",
+      };
+      setData((prev) => {
+        // Preserve the current state reference when the API returned no changes.
+        // This avoids rerendering the entire dashboard on every polling cycle.
+        const unchanged = JSON.stringify(prev.overview) === JSON.stringify(next.overview)
+          && JSON.stringify(prev.branches) === JSON.stringify(next.branches)
+          && JSON.stringify(prev.state) === JSON.stringify(next.state)
+          && JSON.stringify(prev.events) === JSON.stringify(next.events)
+          && JSON.stringify(prev.leases) === JSON.stringify(next.leases)
+          && JSON.stringify(prev.settings) === JSON.stringify(next.settings)
+          && JSON.stringify(prev.health) === JSON.stringify(next.health);
+        if (unchanged && prev.connected && prev.loaded && !prev.error) return prev;
+        return { ...next, lastUpdated: unchanged ? prev.lastUpdated : Date.now() };
       });
       return true;
     } catch (err) {
@@ -65,7 +78,9 @@ export function useCohort() {
 
     const onVisibilityChange = () => {
       clearTimer();
-      if (!document.hidden) void poll();
+      // Returning to the tab must not trigger a burst of API calls or a visual refresh.
+      // Resume the normal cadence instead.
+      if (!document.hidden) timer = window.setTimeout(poll, POLL_INTERVAL_MS);
     };
 
     void poll();
@@ -113,7 +128,10 @@ export function useOptional<T>(path: string | null, intervalMs = 0): Optional<T>
       try {
         const data = await api<T>(path);
         if (!active) return;
-        setState({ status: "ready", data, error: "" });
+        setState((prev) => {
+          if (prev.status === "ready" && JSON.stringify(prev.data) === JSON.stringify(data)) return prev;
+          return { status: "ready", data, error: "" };
+        });
         schedule(intervalMs);
       } catch (err) {
         if (!active) return;
@@ -128,7 +146,8 @@ export function useOptional<T>(path: string | null, intervalMs = 0): Optional<T>
 
     const onVisibilityChange = () => {
       clearTimer();
-      if (!document.hidden) void load();
+      // Do not refresh immediately when the user switches back to this window.
+      if (!document.hidden && intervalMs) schedule(intervalMs);
     };
 
     void load();
