@@ -60,11 +60,7 @@ def test_independent_postgres_clients_serialize_claim_and_fence_expired_owner():
         assert claimed["fencing_token"] == old_token + 1
         replacement.start(task["task_id"], new_owner, claimed["fencing_token"])
 
-        stale = TaskCoordinator(
-            PostgresPersistentWorkspace(
-                DATABASE_URL, require_leases=True, organization_id=organization_id
-            )._conn
-        )
+        stale = winner_coordinator
         with pytest.raises(TaskError) as exc:
             stale.complete(task["task_id"], owner, old_token, {"ledger": "stale"}, "stale")
         assert exc.value.code == "task_fenced"
@@ -78,5 +74,3 @@ def test_independent_postgres_clients_serialize_claim_and_fence_expired_owner():
     finally:
         first.close()
         second.close()
-        if stale is not None:
-            stale._conn.close()
