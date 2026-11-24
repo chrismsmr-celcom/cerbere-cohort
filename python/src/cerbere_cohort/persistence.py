@@ -286,6 +286,20 @@ class PersistentWorkspace:
             self._delete_lease(resource_key)
         self._mutate(operation)
     
+    def refresh(self) -> None:
+        """Reload persisted state while holding the cross-process database lock."""
+        if not self.auto_save:
+            self._load_from_db()
+            return
+        with self._lock:
+            self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                self._load_from_db()
+                self._conn.commit()
+            except BaseException:
+                self._conn.rollback()
+                raise
+
     def get_events(self) -> List[CerbereCohortEvent]:
         return self._workspace.get_events()
     
