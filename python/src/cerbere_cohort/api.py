@@ -734,6 +734,8 @@ def create_task(
     context: dict[str, Any] = Depends(require_workspace_write_access),
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ):
+    if not isinstance(idempotency_key, str):
+        idempotency_key = None
     if idempotency_key is not None and (not idempotency_key.strip() or len(idempotency_key) > 200):
         raise HTTPException(422, "Idempotency-Key must contain 1 to 200 characters")
     with _lock:
@@ -1164,6 +1166,10 @@ def commit_branch(
     body: CommitRequest | None = None,
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ):
+    # Direct Python callers receive FastAPI's Header marker as the default;
+    # treat that marker as "no key" while HTTP requests resolve it to a string.
+    if not isinstance(idempotency_key, str):
+        idempotency_key = None
     if idempotency_key is not None:
         key = idempotency_key.strip()
         if not key or len(key) > 200:
