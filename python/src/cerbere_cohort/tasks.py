@@ -299,6 +299,30 @@ class TaskCoordinator:
             self._conn.rollback()
             raise
 
+    def retry(self, task_id: str):
+        """Explicitly requeue a failed task; the next claim receives a new token."""
+        now = time.time()
+        self._begin()
+        try:
+            row = self._row(task_id)
+            if row["status"] != "failed":
+                raise TaskError("Only failed tasks can be retried", code="task_not_retryable")
+            previous_token = int(row["fencing_token"])
+            self._conn.execute(
+                """UPDATE agent_tasks SET status = 'pending', assigned_agent_id = NULL,
+                   lease_expires_at = NULL, result_json = NULL, result_hash = NULL,
+                   completion_key = NULL, error = NULL, updated_at = ?
+                   WHERE task_id = ?""",
+                (now, task_id),
+            )
+            self._event(task_id, None, "task.requeued", previous_token)
+            result = self._row(task_id)
+            self._conn.commit()
+            return self._serialize(result)
+        except BaseException:
+            self._conn.rollback()
+            raise
+
     def events(self, task_id: str):
         self._row(task_id)
         rows = self._conn.execute(
