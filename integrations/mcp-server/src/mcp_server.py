@@ -219,11 +219,15 @@ class CohortService:
 
     def _migrate_legacy_mcp_branches(self) -> None:
         """Move pre-unification MCP branches into the REST branch registry once."""
-        exists = self._db.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='mcp_branches'"
-        ).fetchone() if self.db_path is not None else self._db.execute(
-            "SELECT to_regclass(%s) AS name", ("cohort_mcp_branches",)
-        ).fetchone()
+        if self.db_path is not None:
+            exists = self._db.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='mcp_branches'"
+            ).fetchone()
+        else:
+            schema = getattr(self._db, "schema", "public")
+            exists = self._db.execute(
+                "SELECT to_regclass(?) AS name", (f"{schema}.cohort_mcp_branches",)
+            ).fetchone()
         if not exists or (self.db_path is None and not exists["name"]):
             return
         rows = self._db.execute("SELECT * FROM mcp_branches").fetchall()
@@ -360,7 +364,7 @@ class CohortService:
             ).fetchone()
             if existing:
                 raise ValueError(f"Branch '{branch_name}' already exists for '{agent_id}'.")
-            branch = self.workspace.create_branch(agent_id, branch_name)
+            branch = self.workspace._workspace.create_branch(agent_id, branch_name)
             branch_id = f"mcp-{uuid.uuid4()}"
             self._save_branch_row(branch_id, agent_id, branch)
             return {
@@ -427,13 +431,15 @@ class CohortService:
         if not task_id and (task_fencing_token is not None or idempotency_key is not None):
             raise ValueError("Task fencing and idempotency arguments require task_id")
 
+        task_coordinator = self._task_coordinator() if task_id else None
+
         def commit_once():
             row = self._branch_row(agent_id, branch_name)
             branch = self._branch_from_row(row)
             snapshot = self.workspace._workspace.commit(agent_id, branch)
             completed_task = None
             if task_id:
-                completed_task = self._task_coordinator().complete_in_transaction(
+                completed_task = task_coordinator.complete_in_transaction(
                     task_id, agent_id, task_fencing_token,
                     result if result is not None else {
                         "branch_id": row["branch_id"], "head": snapshot.version_id
