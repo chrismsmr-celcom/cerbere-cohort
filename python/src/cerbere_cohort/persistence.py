@@ -18,6 +18,10 @@ from .workspace import Workspace, Snapshot, Branch, ContentStore
 from .lease import LeaseManager, Lease, LeaseError
 
 
+class IdempotencyConflict(ValueError):
+    """An idempotency key was reused for a different logical request."""
+
+
 class PersistentWorkspace:
     """
     Workspace persistant basé sur SQLite.
@@ -86,6 +90,15 @@ class PersistentWorkspace:
                 CREATE TABLE IF NOT EXISTS metadata (
                     key TEXT PRIMARY KEY,
                     value TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS idempotency_records (
+                    scope TEXT NOT NULL,
+                    idempotency_key TEXT NOT NULL,
+                    request_hash TEXT NOT NULL,
+                    response_json TEXT NOT NULL,
+                    created_at REAL NOT NULL,
+                    PRIMARY KEY (scope, idempotency_key)
                 );
 
                 CREATE TABLE IF NOT EXISTS lease_counters (
@@ -169,6 +182,46 @@ class PersistentWorkspace:
             )
         )
 
+    def execute_idempotent(self, scope: str, idempotency_key: str,
+                           request_hash: str, operation):
+        """Run an operation once and persist its response in the same DB transaction.
+
+        The callback must perform its state changes using this workspace's
+        in-memory engine and the shared connection. Its changes, event journal,
+        API metadata, and idempotency response are committed atomically.
+        """
+        if not scope or not idempotency_key or len(idempotency_key) > 200:
+            raise ValueError("scope and an idempotency key of at most 200 characters are required")
+        if not request_hash:
+            raise ValueError("request_hash is required")
+
+        def run_once():
+            row = self._conn.execute(
+                "SELECT request_hash, response_json FROM idempotency_records "
+                "WHERE scope = ? AND idempotency_key = ?",
+                (scope, idempotency_key),
+            ).fetchone()
+            if row:
+                if row["request_hash"] != request_hash:
+                    raise IdempotencyConflict(
+                        "Idempotency-Key was already used with a different request"
+                    )
+                return json.loads(row["response_json"])
+
+            response = operation()
+            response_json = json.dumps(
+                response, ensure_ascii=False, separators=(",", ":"), allow_nan=False
+            )
+            self._conn.execute(
+                "INSERT INTO idempotency_records "
+                "(scope, idempotency_key, request_hash, response_json, created_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (scope, idempotency_key, request_hash, response_json, time.time()),
+            )
+            return response
+
+        return self._mutate(run_once)
+
     def seed(self, data: Dict[str, Any], agent_id: str = "system") -> Snapshot:
         """Initialise l'état par un commit journalisé et persisté."""
         return self._mutate(lambda: self._workspace.seed(data, agent_id))
@@ -233,6 +286,20 @@ class PersistentWorkspace:
             self._delete_lease(resource_key)
         self._mutate(operation)
     
+    def refresh(self) -> None:
+        """Reload persisted state while holding the cross-process database lock."""
+        if not self.auto_save:
+            self._load_from_db()
+            return
+        with self._lock:
+            self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                self._load_from_db()
+                self._conn.commit()
+            except BaseException:
+                self._conn.rollback()
+                raise
+
     def get_events(self) -> List[CerbereCohortEvent]:
         return self._workspace.get_events()
     
@@ -268,6 +335,14 @@ class PersistentWorkspace:
                 raise
             except BaseException:
                 self._conn.rollback()
+                # The in-memory workspace may already have been mutated before
+                # a later guard (for example task fencing) rejects publication.
+                # Rebuild it from the rolled-back journal so this process cannot
+                # observe state that was never committed to durable storage.
+                try:
+                    self._load_from_db()
+                except Exception:
+                    pass
                 raise
 
     # === Méthodes de persistance ===

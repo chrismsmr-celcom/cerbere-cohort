@@ -245,6 +245,50 @@ The hosted MCP service and REST API currently maintain separate branch registrie
 
 The REST service is built with FastAPI. In hosted PostgreSQL mode, it validates Supabase JWTs and checks active membership for the requested organization. Each organization is routed to its own PostgreSQL schema.
 
+## Coordinate task execution
+
+The REST API also provides a durable task queue for agents that need exclusive ownership of work. Tasks move through `pending → assigned → running → completed/failed`. Claims carry a monotonically increasing fencing token; an expired task can be reclaimed, but the previous owner cannot publish with its stale token.
+
+Create a task with a stable creation key:
+
+```http
+POST /api/tasks
+Authorization: Bearer <TOKEN>
+X-Organization-ID: <WORKSPACE_ID>
+Idempotency-Key: create-invoice-42
+
+{
+  "title": "Process invoice 42",
+  "payload": { "invoice_id": "42" }
+}
+```
+
+Claim and start it:
+
+```http
+POST /api/tasks/<TASK_ID>/claim
+Content-Type: application/json
+
+{ "agent_id": "agent-a", "lease_seconds": 60 }
+```
+
+Use the returned `fencing_token` to start and heartbeat the task. When the agent's work is a workspace change, publish the branch and complete the task atomically:
+
+```http
+POST /api/branches/<BRANCH_ID>/commit
+Authorization: Bearer <TOKEN>
+X-Organization-ID: <WORKSPACE_ID>
+Idempotency-Key: commit-invoice-42
+Content-Type: application/json
+
+{
+  "task_id": "<TASK_ID>",
+  "task_fencing_token": 1
+}
+```
+
+**Keep the same idempotency key and request body when retrying a timed-out commit.** Cohort returns the original response instead of committing twice. A reused key with a different request is rejected. If a task fails, a workspace user can explicitly requeue it with `POST /api/tasks/<TASK_ID>/retry`; the next claim receives a higher fencing token.
+
 ## Deployment
 
 - [Deploy the SaaS beta](docs/DEPLOYMENT.md) — Vercel, Render, Supabase, environment variables, and verification.

@@ -54,7 +54,8 @@ from cerbere_cohort import (
     PreferAgent,
     Resolution,
 )
-from cerbere_cohort.persistence import PersistentWorkspace
+from cerbere_cohort.persistence import PersistentWorkspace, IdempotencyConflict
+from cerbere_cohort.tasks import TaskCoordinator, TaskError, ensure_task_schema
 
 DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
 DB_PATH = Path(os.getenv("COHORT_DB_PATH", "./data/cohort.db"))
@@ -116,13 +117,18 @@ def _ensure_api_branches_schema(conn, *, postgres: bool) -> None:
 
 if not DATABASE_URL:
     _ensure_api_branches_schema(workspace._conn, postgres=False)
+    ensure_task_schema(workspace._conn)
 
-def _save_api_branch(branch_id: str, item: dict[str, Any]) -> None:
+def _save_api_branch(branch_id: str, item: dict[str, Any], *, commit: bool = True) -> None:
     b = item['branch']
     workspace._conn.execute("INSERT INTO api_branches (branch_id, agent_id, branch_name, base_version, current_data_json, intents_json, fencing_tokens_json, status, conflicting_keys_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(branch_id) DO UPDATE SET current_data_json=excluded.current_data_json, intents_json=excluded.intents_json, fencing_tokens_json=excluded.fencing_tokens_json, status=excluded.status, conflicting_keys_json=excluded.conflicting_keys_json", (branch_id, item['agent_id'], b.name, b.base_version, json.dumps(b.current_data, ensure_ascii=False), json.dumps(b.intents, ensure_ascii=False), json.dumps(b.fencing_tokens, ensure_ascii=False), item['status'], json.dumps(item.get('conflicting_keys', [])), item['created_at']))
-    workspace._conn.commit()
+    if commit:
+        workspace._conn.commit()
 
-def _restore_api_branches() -> None:
+def _restore_api_branches(*, clear: bool = False, commit: bool = True) -> None:
+    if clear:
+        for branch_id in list(_branches):
+            del _branches[branch_id]
     committed = {
         (event.agent_id, event.payload.get('branch_name'))
         for event in workspace.get_events()
@@ -140,7 +146,16 @@ def _restore_api_branches() -> None:
         b.intents = json.loads(row['intents_json'])
         b.fencing_tokens = json.loads(row['fencing_tokens_json'] or "{}")
         _branches[row['branch_id']] = {'branch': b, 'agent_id': row['agent_id'], 'status': row['status'], 'conflicting_keys': json.loads(row['conflicting_keys_json']), 'created_at': row['created_at']}
-    workspace._conn.commit()
+    if commit:
+        workspace._conn.commit()
+
+
+def _refresh_api_branches() -> None:
+    """Refresh PostgreSQL workspace and branch registry across API processes."""
+    if not DATABASE_URL:
+        return
+    workspace.refresh()
+    _restore_api_branches(clear=True, commit=True)
 
 if not DATABASE_URL:
     _restore_api_branches()
@@ -606,6 +621,14 @@ class BranchWrite(BaseModel):
 class CommitRequest(BaseModel):
     # Exact snapshot version read when the branch was created.
     expected_head_version: str | None = Field(default=None, min_length=64, max_length=64)
+    task_id: str | None = Field(default=None, min_length=1, max_length=120)
+    task_fencing_token: int | None = Field(default=None, ge=1)
+
+    @model_validator(mode="after")
+    def _require_task_fencing_pair(self):
+        if bool(self.task_id) != (self.task_fencing_token is not None):
+            raise ValueError("task_id and task_fencing_token must be supplied together")
+        return self
 
 
 class LeaseRequest(BaseModel):
@@ -672,6 +695,161 @@ def _branch_summary(branch_id: str, item: dict[str, Any]) -> dict[str, Any]:
         "conflicting_keys": item.get("conflicting_keys", []),
         "created_at": item["created_at"],
     }
+
+
+class TaskCreateRequest(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+    payload: Any = Field(default_factory=dict)
+
+
+class TaskClaimRequest(BaseModel):
+    agent_id: str = Field(min_length=1, max_length=120)
+    lease_seconds: float = Field(default=60, ge=1, le=86400)
+
+
+class TaskOwnerRequest(BaseModel):
+    agent_id: str = Field(min_length=1, max_length=120)
+    fencing_token: int = Field(ge=1)
+
+
+class TaskHeartbeatRequest(TaskOwnerRequest):
+    lease_seconds: float = Field(default=60, ge=1, le=86400)
+
+
+class TaskCompleteRequest(TaskOwnerRequest):
+    result: Any
+    idempotency_key: str = Field(min_length=1, max_length=200)
+
+
+class TaskFailRequest(TaskOwnerRequest):
+    error: str = Field(min_length=1, max_length=4000)
+
+
+def _task_coordinator() -> TaskCoordinator:
+    return TaskCoordinator(workspace._conn)
+
+
+def _task_call(operation):
+    try:
+        return operation()
+    except TaskError as exc:
+        raise HTTPException(exc.status_code, detail={"code": exc.code, "message": str(exc)}) from exc
+
+
+@app.post("/api/tasks", status_code=201)
+def create_task(
+    body: TaskCreateRequest,
+    context: dict[str, Any] = Depends(require_workspace_write_access),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+):
+    if not isinstance(idempotency_key, str):
+        idempotency_key = None
+    if idempotency_key is not None and (not idempotency_key.strip() or len(idempotency_key) > 200):
+        raise HTTPException(422, "Idempotency-Key must contain 1 to 200 characters")
+    with _lock:
+        return _task_call(lambda: _task_coordinator().create(body.title, body.payload, idempotency_key))
+
+
+@app.get("/api/tasks")
+def list_tasks(
+    limit: int = 100,
+    context: dict[str, Any] = Depends(require_workspace_read_access),
+):
+    with _lock:
+        items = _task_call(lambda: _task_coordinator().list(limit))
+        if context.get("principal_type") == "agent":
+            items = [item for item in items if item["status"] == "pending" or item["assigned_agent_id"] == context.get("agent_id")]
+        return {"items": items}
+
+
+@app.get("/api/tasks/{task_id}")
+def get_task(task_id: str, context: dict[str, Any] = Depends(require_workspace_read_access)):
+    with _lock:
+        item = _task_call(lambda: _task_coordinator().get(task_id))
+        if context.get("principal_type") == "agent" and item["status"] != "pending" and item["assigned_agent_id"] != context.get("agent_id"):
+            raise HTTPException(404, "Task not found")
+        return item
+
+
+@app.get("/api/tasks/{task_id}/events")
+def get_task_events(task_id: str, context: dict[str, Any] = Depends(require_workspace_read_access)):
+    with _lock:
+        item = _task_call(lambda: _task_coordinator().get(task_id))
+        if context.get("principal_type") == "agent" and item["assigned_agent_id"] != context.get("agent_id"):
+            raise HTTPException(404, "Task not found")
+        return {"items": _task_call(lambda: _task_coordinator().events(task_id))}
+
+
+@app.post("/api/tasks/{task_id}/claim")
+def claim_task(
+    task_id: str,
+    body: TaskClaimRequest,
+    context: dict[str, Any] = Depends(require_workspace_write_access),
+):
+    _require_agent_identity(context, body.agent_id)
+    with _lock:
+        return _task_call(lambda: _task_coordinator().claim(task_id, body.agent_id, body.lease_seconds))
+
+
+@app.post("/api/tasks/{task_id}/start")
+def start_task(
+    task_id: str,
+    body: TaskOwnerRequest,
+    context: dict[str, Any] = Depends(require_workspace_write_access),
+):
+    _require_agent_identity(context, body.agent_id)
+    with _lock:
+        return _task_call(lambda: _task_coordinator().start(task_id, body.agent_id, body.fencing_token))
+
+
+@app.post("/api/tasks/{task_id}/heartbeat")
+def heartbeat_task(
+    task_id: str,
+    body: TaskHeartbeatRequest,
+    context: dict[str, Any] = Depends(require_workspace_write_access),
+):
+    _require_agent_identity(context, body.agent_id)
+    with _lock:
+        return _task_call(lambda: _task_coordinator().heartbeat(
+            task_id, body.agent_id, body.fencing_token, body.lease_seconds
+        ))
+
+
+@app.post("/api/tasks/{task_id}/complete")
+def complete_task(
+    task_id: str,
+    body: TaskCompleteRequest,
+    context: dict[str, Any] = Depends(require_workspace_write_access),
+):
+    _require_agent_identity(context, body.agent_id)
+    with _lock:
+        return _task_call(lambda: _task_coordinator().complete(
+            task_id, body.agent_id, body.fencing_token, body.result, body.idempotency_key
+        ))
+
+
+@app.post("/api/tasks/{task_id}/retry")
+def retry_task(
+    task_id: str,
+    context: dict[str, Any] = Depends(require_workspace_write_access),
+):
+    if context.get("principal_type") == "agent":
+        raise HTTPException(403, "Only a workspace user can requeue a failed task")
+    with _lock:
+        return _task_call(lambda: _task_coordinator().retry(task_id))
+
+
+@app.post("/api/tasks/{task_id}/fail")
+def fail_task(
+    task_id: str,
+    body: TaskFailRequest,
+    context: dict[str, Any] = Depends(require_workspace_write_access),
+):
+    _require_agent_identity(context, body.agent_id)
+    with _lock:
+        return _task_call(lambda: _task_coordinator().fail(
+            task_id, body.agent_id, body.fencing_token, body.error
+        ))
 
 
 @app.get("/api/health")
@@ -904,6 +1082,7 @@ def overview(context: dict[str, Any] = Depends(require_workspace_read_access)):
 @app.get("/api/branches")
 def list_branches(context: dict[str, Any] = Depends(require_workspace_read_access)):
     with _lock:
+        _refresh_api_branches()
         return {"items": [_branch_summary(k, v) for k, v in _branches.items() if _agent_owns(context, v["agent_id"])]}
 
 
@@ -911,6 +1090,7 @@ def list_branches(context: dict[str, Any] = Depends(require_workspace_read_acces
 def get_branch_diff(branch_id: str, context: dict[str, Any] = Depends(require_workspace_read_access)):
     """Preview every key changed by a branch against its base and current HEAD."""
     with _lock:
+        _refresh_api_branches()
         item = _branches.get(branch_id)
         if not item or not _agent_owns(context, item["agent_id"]):
             raise HTTPException(404, "Branch not found")
@@ -963,37 +1143,39 @@ def create_branch(body: BranchCreate, context: dict[str, Any] = Depends(require_
     branch_id = str(uuid.uuid4())
     try:
         with _lock:
-            with event_actor(context):
-                branch = workspace.create_branch(body.agent_id, body.name)
+            def create_and_persist():
+                with event_actor(context):
+                    branch = workspace._workspace.create_branch(body.agent_id, body.name)
+                item = {
+                    "branch": branch, "agent_id": body.agent_id, "status": "open",
+                    "conflicting_keys": [],
+                    "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                }
+                _branches[branch_id] = item
+                _save_api_branch(branch_id, item, commit=False)
+                return _branch_summary(branch_id, item)
+            return workspace._mutate(create_and_persist)
     except Exception as exc:
         raise HTTPException(400, str(exc)) from exc
-    with _lock:
-        _branches[branch_id] = {
-            "branch": branch,
-            "agent_id": body.agent_id,
-            "status": "open",
-            "conflicting_keys": [],
-            "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-        }
-        _save_api_branch(branch_id, _branches[branch_id])
-    return _branch_summary(branch_id, _branches[branch_id])
 
 
 @app.put("/api/branches/{branch_id}/state")
 def write_branch(branch_id: str, body: BranchWrite, context: dict[str, Any] = Depends(require_workspace_write_access)):
-    with _lock:
+    def write_and_persist():
+        _restore_api_branches(clear=True, commit=False)
         item = _branches.get(branch_id)
         if not item or item["status"] != "open" or not _agent_owns(context, item["agent_id"]):
             raise HTTPException(404, "Open branch not found")
         try:
-            # PersistentWorkspace replays its runtime after lease mutations.
-            # Rebind the branch so writes validate against the current lease manager.
             item["branch"]._lease_manager = workspace._workspace._lease_manager
             item["branch"].set(body.key, body.value, intent=body.intent)
-            _save_api_branch(branch_id, item)
+            _save_api_branch(branch_id, item, commit=False)
         except (LeaseError, ValueError) as exc:
             raise HTTPException(409, detail={"message": str(exc), "code": getattr(exc, "code", "write_error")}) from exc
-    return {"ok": True, "branch_id": branch_id, "key": body.key}
+        return {"ok": True, "branch_id": branch_id, "key": body.key}
+
+    with _lock:
+        return workspace._mutate(write_and_persist)
 
 
 @app.post("/api/branches/{branch_id}/commit")
@@ -1001,28 +1183,110 @@ def commit_branch(
     branch_id: str,
     context: dict[str, Any] = Depends(require_workspace_write_access),
     body: CommitRequest | None = None,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ):
-    with _lock:
+    # Direct Python callers receive FastAPI's Header marker as the default;
+    # treat that marker as "no key" while HTTP requests resolve it to a string.
+    if not isinstance(idempotency_key, str):
+        idempotency_key = None
+    if idempotency_key is not None:
+        key = idempotency_key.strip()
+        if not key or len(key) > 200:
+            raise HTTPException(422, "Idempotency-Key must contain 1 to 200 characters")
+        if body and body.task_id and not key:
+            raise HTTPException(422, "Task-bound commits require an Idempotency-Key")
+        task_coordinator = _task_coordinator() if body and body.task_id else None
+        request_hash = hashlib.sha256(json.dumps({
+            "branch_id": branch_id,
+            "expected_head_version": body.expected_head_version if body else None,
+            "task_id": body.task_id if body else None,
+            "task_fencing_token": body.task_fencing_token if body else None,
+        }, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+
+        def commit_once():
+            # Reload the durable branch row after the DB lock and latest replay.
+            row = workspace._conn.execute(
+                "SELECT * FROM api_branches WHERE branch_id = ?", (branch_id,)
+            ).fetchone()
+            if not row or row["status"] != "open" or not _agent_owns(context, row["agent_id"]):
+                raise HTTPException(404, "Open branch not found")
+            base = workspace._workspace._snapshots.get(row["base_version"])
+            if base is None:
+                raise HTTPException(409, "Branch base snapshot is no longer available")
+            branch = Branch(
+                row["branch_name"], base, workspace._workspace._lease_manager,
+                row["agent_id"], workspace._workspace._require_leases,
+            )
+            branch.current_data = json.loads(row["current_data_json"])
+            branch.intents = json.loads(row["intents_json"])
+            branch.fencing_tokens = json.loads(row["fencing_tokens_json"] or "{}")
+            item = {
+                "branch": branch, "agent_id": row["agent_id"], "status": row["status"],
+                "conflicting_keys": json.loads(row["conflicting_keys_json"]),
+                "created_at": row["created_at"],
+            }
+            _branches[branch_id] = item
+            try:
+                with event_actor(context):
+                    snapshot = workspace._workspace.commit(
+                        item["agent_id"], branch,
+                        expected_head_version=body.expected_head_version if body else None,
+                    )
+                if task_coordinator is not None:
+                    task_coordinator.complete_in_transaction(
+                        body.task_id, item["agent_id"], body.task_fencing_token,
+                        {"branch_id": branch_id, "head": snapshot.version_id}, key,
+                    )
+                item["status"] = "merged"
+                item["conflicting_keys"] = []
+                _save_api_branch(branch_id, item, commit=False)
+                return {"ok": True, "head": snapshot.version_id, "branch": _branch_summary(branch_id, item)}
+            except ConflictError as exc:
+                item["conflicting_keys"] = list(exc.conflicting_keys)
+                _save_api_branch(branch_id, item, commit=False)
+                return {
+                    "ok": False, "conflict": True, "branch": _branch_summary(branch_id, item),
+                    "conflicting_keys": list(exc.conflicting_keys),
+                    "head_version": exc.details.get("head_version"),
+                    "base_version": exc.details.get("base_version"),
+                    "error_code": exc.code,
+                    "expected_head_version": exc.details.get("expected_head_version"),
+                    "actual_head_version": exc.details.get("actual_head_version"),
+                }
+
+        try:
+            with _lock:
+                return workspace.execute_idempotent(
+                    f"branch:{branch_id}:commit", key, request_hash, commit_once
+                )
+        except IdempotencyConflict as exc:
+            raise HTTPException(409, detail={"code": "idempotency_key_reused", "message": str(exc)}) from exc
+        except TaskError as exc:
+            raise HTTPException(exc.status_code, detail={"code": exc.code, "message": str(exc)}) from exc
+
+    if body and body.task_id:
+        raise HTTPException(422, "Task-bound commits require an Idempotency-Key")
+
+    def commit_without_key():
+        _restore_api_branches(clear=True, commit=False)
         item = _branches.get(branch_id)
         if not item or item["status"] != "open" or not _agent_owns(context, item["agent_id"]):
             raise HTTPException(404, "Open branch not found")
         try:
             with event_actor(context):
-                snapshot = workspace.commit(
+                snapshot = workspace._workspace.commit(
                     item["agent_id"], item["branch"],
                     expected_head_version=body.expected_head_version if body else None,
                 )
             item["status"] = "merged"
             item["conflicting_keys"] = []
-            _save_api_branch(branch_id, item)
+            _save_api_branch(branch_id, item, commit=False)
             return {"ok": True, "head": snapshot.version_id, "branch": _branch_summary(branch_id, item)}
         except ConflictError as exc:
             item["conflicting_keys"] = list(exc.conflicting_keys)
-            _save_api_branch(branch_id, item)
+            _save_api_branch(branch_id, item, commit=False)
             return {
-                "ok": False,
-                "conflict": True,
-                "branch": _branch_summary(branch_id, item),
+                "ok": False, "conflict": True, "branch": _branch_summary(branch_id, item),
                 "conflicting_keys": list(exc.conflicting_keys),
                 "head_version": exc.details.get("head_version"),
                 "base_version": exc.details.get("base_version"),
@@ -1031,10 +1295,14 @@ def commit_branch(
                 "actual_head_version": exc.details.get("actual_head_version"),
             }
 
+    with _lock:
+        return workspace._mutate(commit_without_key)
+
 
 @app.get("/api/branches/{branch_id}/conflict")
 def get_branch_conflict(branch_id: str, context: dict[str, Any] = Depends(require_workspace_read_access)):
     with _lock:
+        _refresh_api_branches()
         item = _branches.get(branch_id)
         if not item or item["status"] != "open" or not _agent_owns(context, item["agent_id"]):
             raise HTTPException(404, "Open branch not found")
@@ -1073,47 +1341,56 @@ def get_branch_conflict(branch_id: str, context: dict[str, Any] = Depends(requir
 
 @app.post("/api/branches/{branch_id}/resolve")
 def resolve_branch(branch_id: str, body: ResolveRequest, context: dict[str, Any] = Depends(require_workspace_write_access)):
-    with _lock:
+    if body.strategy == "PreferHead":
+        resolver = PreferHead()
+    elif body.strategy == "PreferBranch":
+        resolver = PreferBranch()
+    else:
+        if not body.priority:
+            raise HTTPException(422, "priority is required for PreferAgent")
+        resolver = PreferAgent(body.priority)
+
+    class AuditedResolver:
+        name = resolver.name
+        def resolve(self, conflict):
+            decision = resolver.resolve(conflict)
+            if decision is None:
+                return None
+            return Resolution(
+                present=decision.present, value=decision.value, rationale=body.rationale,
+            )
+
+    def resolve_and_persist():
+        _restore_api_branches(clear=True, commit=False)
         item = _branches.get(branch_id)
         if not item or item["status"] != "open" or not _agent_owns(context, item["agent_id"]):
             raise HTTPException(404, "Open branch not found")
         if not item.get("conflicting_keys"):
             raise HTTPException(409, "Branch has no recorded conflict")
-        if body.strategy == "PreferHead":
-            resolver = PreferHead()
-        elif body.strategy == "PreferBranch":
-            resolver = PreferBranch()
-        else:
-            if not body.priority:
-                raise HTTPException(422, "priority is required for PreferAgent")
-            resolver = PreferAgent(body.priority)
-        # Keep the user rationale in the event metadata through a small resolver wrapper.
-        class AuditedResolver:
-            name = resolver.name
-            def resolve(self, conflict):
-                decision = resolver.resolve(conflict)
-                if decision is None:
-                    return None
-                return Resolution(
-                    present=decision.present,
-                    value=decision.value,
-                    rationale=body.rationale,
-                )
         try:
             with event_actor(context):
-                snapshot = workspace.commit(item["agent_id"], item["branch"], resolver=AuditedResolver())
+                snapshot = workspace._workspace.commit(
+                    item["agent_id"], item["branch"], resolver=AuditedResolver()
+                )
             item["status"] = "merged"
             item["conflicting_keys"] = []
-            _save_api_branch(branch_id, item)
+            _save_api_branch(branch_id, item, commit=False)
             return {"ok": True, "head": snapshot.version_id, "branch": _branch_summary(branch_id, item)}
         except ConflictError as exc:
             item["conflicting_keys"] = list(exc.conflicting_keys)
-            _save_api_branch(branch_id, item)
-            raise HTTPException(409, detail={"message": str(exc), "conflicting_keys": list(exc.conflicting_keys)}) from exc
+            _save_api_branch(branch_id, item, commit=False)
+            raise HTTPException(
+                409, detail={"message": str(exc), "conflicting_keys": list(exc.conflicting_keys)}
+            ) from exc
+
+    with _lock:
+        return workspace._mutate(resolve_and_persist)
 
 
 @app.get("/api/state")
 def get_state(context: dict[str, Any] = Depends(require_workspace_read_access)):
+    if DATABASE_URL:
+        workspace.refresh()
     head = workspace.head
     return {
         "head": head.version_id,
@@ -1127,6 +1404,8 @@ def get_state(context: dict[str, Any] = Depends(require_workspace_read_access)):
 
 @app.get("/api/events")
 def get_events(limit: int = 100, context: dict[str, Any] = Depends(require_workspace_read_access)):
+    if DATABASE_URL:
+        workspace.refresh()
     if limit < 1 or limit > 1000:
         raise HTTPException(422, "limit must be between 1 and 1000")
     events = workspace.get_events()
@@ -1140,6 +1419,8 @@ def get_events(limit: int = 100, context: dict[str, Any] = Depends(require_works
 
 @app.get("/api/leases")
 def get_leases(context: dict[str, Any] = Depends(require_lease_read_access)):
+    if DATABASE_URL:
+        workspace.refresh()
     leases = workspace._workspace._lease_manager.get_active_leases()
     return {
         "items": [
