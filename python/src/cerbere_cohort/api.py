@@ -125,7 +125,10 @@ def _save_api_branch(branch_id: str, item: dict[str, Any], *, commit: bool = Tru
     if commit:
         workspace._conn.commit()
 
-def _restore_api_branches() -> None:
+def _restore_api_branches(*, clear: bool = False, commit: bool = True) -> None:
+    if clear:
+        for branch_id in list(_branches):
+            del _branches[branch_id]
     committed = {
         (event.agent_id, event.payload.get('branch_name'))
         for event in workspace.get_events()
@@ -143,7 +146,16 @@ def _restore_api_branches() -> None:
         b.intents = json.loads(row['intents_json'])
         b.fencing_tokens = json.loads(row['fencing_tokens_json'] or "{}")
         _branches[row['branch_id']] = {'branch': b, 'agent_id': row['agent_id'], 'status': row['status'], 'conflicting_keys': json.loads(row['conflicting_keys_json']), 'created_at': row['created_at']}
-    workspace._conn.commit()
+    if commit:
+        workspace._conn.commit()
+
+
+def _refresh_api_branches() -> None:
+    """Refresh PostgreSQL workspace and branch registry across API processes."""
+    if not DATABASE_URL:
+        return
+    workspace.refresh()
+    _restore_api_branches(clear=True, commit=True)
 
 if not DATABASE_URL:
     _restore_api_branches()
