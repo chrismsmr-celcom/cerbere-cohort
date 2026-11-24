@@ -55,6 +55,7 @@ from cerbere_cohort import (
     Resolution,
 )
 from cerbere_cohort.persistence import PersistentWorkspace, IdempotencyConflict
+from cerbere_cohort.tasks import TaskCoordinator, TaskError, ensure_task_schema
 
 DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
 DB_PATH = Path(os.getenv("COHORT_DB_PATH", "./data/cohort.db"))
@@ -116,6 +117,7 @@ def _ensure_api_branches_schema(conn, *, postgres: bool) -> None:
 
 if not DATABASE_URL:
     _ensure_api_branches_schema(workspace._conn, postgres=False)
+    ensure_task_schema(workspace._conn)
 
 def _save_api_branch(branch_id: str, item: dict[str, Any], *, commit: bool = True) -> None:
     b = item['branch']
@@ -673,6 +675,148 @@ def _branch_summary(branch_id: str, item: dict[str, Any]) -> dict[str, Any]:
         "conflicting_keys": item.get("conflicting_keys", []),
         "created_at": item["created_at"],
     }
+
+
+class TaskCreateRequest(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+    payload: Any = Field(default_factory=dict)
+
+
+class TaskClaimRequest(BaseModel):
+    agent_id: str = Field(min_length=1, max_length=120)
+    lease_seconds: float = Field(default=60, ge=1, le=86400)
+
+
+class TaskOwnerRequest(BaseModel):
+    agent_id: str = Field(min_length=1, max_length=120)
+    fencing_token: int = Field(ge=1)
+
+
+class TaskHeartbeatRequest(TaskOwnerRequest):
+    lease_seconds: float = Field(default=60, ge=1, le=86400)
+
+
+class TaskCompleteRequest(TaskOwnerRequest):
+    result: Any
+    idempotency_key: str = Field(min_length=1, max_length=200)
+
+
+class TaskFailRequest(TaskOwnerRequest):
+    error: str = Field(min_length=1, max_length=4000)
+
+
+def _task_coordinator() -> TaskCoordinator:
+    return TaskCoordinator(workspace._conn)
+
+
+def _task_call(operation):
+    try:
+        return operation()
+    except TaskError as exc:
+        raise HTTPException(exc.status_code, detail={"code": exc.code, "message": str(exc)}) from exc
+
+
+@app.post("/api/tasks", status_code=201)
+def create_task(
+    body: TaskCreateRequest,
+    context: dict[str, Any] = Depends(require_workspace_write_access),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+):
+    if idempotency_key is not None and (not idempotency_key.strip() or len(idempotency_key) > 200):
+        raise HTTPException(422, "Idempotency-Key must contain 1 to 200 characters")
+    with _lock:
+        return _task_call(lambda: _task_coordinator().create(body.title, body.payload, idempotency_key))
+
+
+@app.get("/api/tasks")
+def list_tasks(
+    limit: int = 100,
+    context: dict[str, Any] = Depends(require_workspace_read_access),
+):
+    with _lock:
+        items = _task_call(lambda: _task_coordinator().list(limit))
+        if context.get("principal_type") == "agent":
+            items = [item for item in items if item["status"] == "pending" or item["assigned_agent_id"] == context.get("agent_id")]
+        return {"items": items}
+
+
+@app.get("/api/tasks/{task_id}")
+def get_task(task_id: str, context: dict[str, Any] = Depends(require_workspace_read_access)):
+    with _lock:
+        item = _task_call(lambda: _task_coordinator().get(task_id))
+        if context.get("principal_type") == "agent" and item["status"] != "pending" and item["assigned_agent_id"] != context.get("agent_id"):
+            raise HTTPException(404, "Task not found")
+        return item
+
+
+@app.get("/api/tasks/{task_id}/events")
+def get_task_events(task_id: str, context: dict[str, Any] = Depends(require_workspace_read_access)):
+    with _lock:
+        item = _task_call(lambda: _task_coordinator().get(task_id))
+        if context.get("principal_type") == "agent" and item["assigned_agent_id"] != context.get("agent_id"):
+            raise HTTPException(404, "Task not found")
+        return {"items": _task_call(lambda: _task_coordinator().events(task_id))}
+
+
+@app.post("/api/tasks/{task_id}/claim")
+def claim_task(
+    task_id: str,
+    body: TaskClaimRequest,
+    context: dict[str, Any] = Depends(require_workspace_write_access),
+):
+    _require_agent_identity(context, body.agent_id)
+    with _lock:
+        return _task_call(lambda: _task_coordinator().claim(task_id, body.agent_id, body.lease_seconds))
+
+
+@app.post("/api/tasks/{task_id}/start")
+def start_task(
+    task_id: str,
+    body: TaskOwnerRequest,
+    context: dict[str, Any] = Depends(require_workspace_write_access),
+):
+    _require_agent_identity(context, body.agent_id)
+    with _lock:
+        return _task_call(lambda: _task_coordinator().start(task_id, body.agent_id, body.fencing_token))
+
+
+@app.post("/api/tasks/{task_id}/heartbeat")
+def heartbeat_task(
+    task_id: str,
+    body: TaskHeartbeatRequest,
+    context: dict[str, Any] = Depends(require_workspace_write_access),
+):
+    _require_agent_identity(context, body.agent_id)
+    with _lock:
+        return _task_call(lambda: _task_coordinator().heartbeat(
+            task_id, body.agent_id, body.fencing_token, body.lease_seconds
+        ))
+
+
+@app.post("/api/tasks/{task_id}/complete")
+def complete_task(
+    task_id: str,
+    body: TaskCompleteRequest,
+    context: dict[str, Any] = Depends(require_workspace_write_access),
+):
+    _require_agent_identity(context, body.agent_id)
+    with _lock:
+        return _task_call(lambda: _task_coordinator().complete(
+            task_id, body.agent_id, body.fencing_token, body.result, body.idempotency_key
+        ))
+
+
+@app.post("/api/tasks/{task_id}/fail")
+def fail_task(
+    task_id: str,
+    body: TaskFailRequest,
+    context: dict[str, Any] = Depends(require_workspace_write_access),
+):
+    _require_agent_identity(context, body.agent_id)
+    with _lock:
+        return _task_call(lambda: _task_coordinator().fail(
+            task_id, body.agent_id, body.fencing_token, body.error
+        ))
 
 
 @app.get("/api/health")
