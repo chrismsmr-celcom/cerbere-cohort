@@ -1,10 +1,12 @@
 import threading
+import time
 
 import pytest
 from fastapi import HTTPException
 
 from cerbere_cohort import api
 from cerbere_cohort.persistence import PersistentWorkspace
+from cerbere_cohort.tasks import TaskCoordinator
 
 
 def _api_branch_schema(store):
@@ -62,4 +64,65 @@ def test_api_commit_rejects_idempotency_key_reuse_with_different_payload(tmp_pat
         )
     assert exc.value.status_code == 409
     assert exc.value.detail["code"] == "idempotency_key_reused"
+    store.close()
+
+
+def test_task_fencing_and_branch_commit_are_one_atomic_operation(tmp_path, monkeypatch):
+    store = PersistentWorkspace(tmp_path / "task-bound-commit.db")
+    _api_branch_schema(store)
+    monkeypatch.setattr(api, "workspace", store)
+    monkeypatch.setattr(api, "_branches", {})
+    monkeypatch.setattr(api, "_lock", threading.RLock())
+    context = {"principal_type": "user"}
+
+    created = api.create_branch(api.BranchCreate(agent_id="agent-a", name="task-work"), context)
+    api.write_branch(created["id"], api.BranchWrite(key="deployment", value={"version": 2}), context)
+    tasks = TaskCoordinator(store._conn)
+    task = tasks.create("Deploy version 2", {"service": "api"})
+    claim = tasks.claim(task["task_id"], "agent-a", lease_seconds=30)
+    tasks.start(task["task_id"], "agent-a", claim["fencing_token"])
+
+    response = api.commit_branch(
+        created["id"], context,
+        api.CommitRequest(task_id=task["task_id"], task_fencing_token=claim["fencing_token"]),
+        "deploy-version-2",
+    )
+    assert response["ok"] is True
+    completed = tasks.get(task["task_id"])
+    assert completed["status"] == "completed"
+    assert completed["result"] == {
+        "branch_id": created["id"], "head": response["head"]
+    }
+    store.close()
+
+
+def test_expired_task_owner_cannot_publish_branch_commit(tmp_path, monkeypatch):
+    store = PersistentWorkspace(tmp_path / "stale-task-commit.db")
+    _api_branch_schema(store)
+    monkeypatch.setattr(api, "workspace", store)
+    monkeypatch.setattr(api, "_branches", {})
+    monkeypatch.setattr(api, "_lock", threading.RLock())
+    context = {"principal_type": "user"}
+
+    created = api.create_branch(api.BranchCreate(agent_id="agent-a", name="stale-task"), context)
+    api.write_branch(created["id"], api.BranchWrite(key="release", value="v1"), context)
+    tasks = TaskCoordinator(store._conn)
+    task = tasks.create("Release v1", {})
+    old = tasks.claim(task["task_id"], "agent-a", lease_seconds=1)
+    tasks.start(task["task_id"], "agent-a", old["fencing_token"])
+    time.sleep(1.05)
+    replacement = tasks.claim(task["task_id"], "agent-b", lease_seconds=30)
+    tasks.start(task["task_id"], "agent-b", replacement["fencing_token"])
+    before = store.head.version_id
+
+    with pytest.raises(HTTPException) as exc:
+        api.commit_branch(
+            created["id"], context,
+            api.CommitRequest(task_id=task["task_id"], task_fencing_token=old["fencing_token"]),
+            "stale-release",
+        )
+    assert exc.value.status_code == 409
+    assert exc.value.detail["code"] == "task_fenced"
+    assert store.head.version_id == before
+    assert tasks.get(task["task_id"])["status"] == "running"
     store.close()
