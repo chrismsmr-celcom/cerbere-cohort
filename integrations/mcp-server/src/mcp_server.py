@@ -233,6 +233,18 @@ class CohortService:
         if not exists or (self.db_path is None and not exists["name"]):
             return
 
+        # Some early MCP databases predate branch fencing-token persistence.
+        if self.db_path is not None:
+            columns = {row["name"] for row in self._db.execute("PRAGMA table_info(mcp_branches)")}
+            if "fencing_tokens_json" not in columns:
+                self._db.execute(
+                    "ALTER TABLE mcp_branches ADD COLUMN fencing_tokens_json TEXT NOT NULL DEFAULT '{}'"
+                )
+        else:
+            self._db.execute(
+                "ALTER TABLE mcp_branches ADD COLUMN IF NOT EXISTS fencing_tokens_json TEXT NOT NULL DEFAULT '{}'"
+            )
+
         self._db.execute("BEGIN IMMEDIATE")
         try:
             rows = self._db.execute("SELECT * FROM mcp_branches").fetchall()
