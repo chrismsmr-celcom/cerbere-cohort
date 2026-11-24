@@ -1349,6 +1349,8 @@ def resolve_branch(branch_id: str, body: ResolveRequest, context: dict[str, Any]
 
 @app.get("/api/state")
 def get_state(context: dict[str, Any] = Depends(require_workspace_read_access)):
+    if DATABASE_URL:
+        workspace.refresh()
     head = workspace.head
     return {
         "head": head.version_id,
@@ -1362,6 +1364,8 @@ def get_state(context: dict[str, Any] = Depends(require_workspace_read_access)):
 
 @app.get("/api/events")
 def get_events(limit: int = 100, context: dict[str, Any] = Depends(require_workspace_read_access)):
+    if DATABASE_URL:
+        workspace.refresh()
     if limit < 1 or limit > 1000:
         raise HTTPException(422, "limit must be between 1 and 1000")
     events = workspace.get_events()
@@ -1375,6 +1379,8 @@ def get_events(limit: int = 100, context: dict[str, Any] = Depends(require_works
 
 @app.get("/api/leases")
 def get_leases(context: dict[str, Any] = Depends(require_lease_read_access)):
+    if DATABASE_URL:
+        workspace.refresh()
     leases = workspace._workspace._lease_manager.get_active_leases()
     return {
         "items": [
