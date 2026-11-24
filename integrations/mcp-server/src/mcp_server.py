@@ -40,6 +40,8 @@ def _error_envelope(exc: Exception) -> dict[str, Any]:
     """
     if isinstance(exc, CerbereError):
         return exc.to_dict()
+    if isinstance(exc, TaskError):
+        return {"code": exc.code, "message": str(exc), "details": None}
     if isinstance(exc, ValueError):
         return {"code": "invalid_argument", "message": str(exc), "details": None}
     return {"code": "internal_error", "message": str(exc), "details": None}
