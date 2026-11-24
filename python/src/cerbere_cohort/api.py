@@ -1061,6 +1061,7 @@ def overview(context: dict[str, Any] = Depends(require_workspace_read_access)):
 @app.get("/api/branches")
 def list_branches(context: dict[str, Any] = Depends(require_workspace_read_access)):
     with _lock:
+        _refresh_api_branches()
         return {"items": [_branch_summary(k, v) for k, v in _branches.items() if _agent_owns(context, v["agent_id"])]}
 
 
@@ -1068,6 +1069,7 @@ def list_branches(context: dict[str, Any] = Depends(require_workspace_read_acces
 def get_branch_diff(branch_id: str, context: dict[str, Any] = Depends(require_workspace_read_access)):
     """Preview every key changed by a branch against its base and current HEAD."""
     with _lock:
+        _refresh_api_branches()
         item = _branches.get(branch_id)
         if not item or not _agent_owns(context, item["agent_id"]):
             raise HTTPException(404, "Branch not found")
@@ -1166,7 +1168,9 @@ def commit_branch(
             raise HTTPException(422, "Idempotency-Key must contain 1 to 200 characters")
         request_hash = hashlib.sha256(json.dumps({
             "branch_id": branch_id,
-            "agent_id": context.get("agent_id") or _branches.get(branch_id, {}).get("agent_id"),
+            "agent_id": context.get("agent_id") or (workspace._conn.execute(
+                "SELECT agent_id FROM api_branches WHERE branch_id = ?", (branch_id,)
+            ).fetchone() or {}).get("agent_id"),
             "expected_head_version": body.expected_head_version if body else None,
         }, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
 
@@ -1255,6 +1259,7 @@ def commit_branch(
 @app.get("/api/branches/{branch_id}/conflict")
 def get_branch_conflict(branch_id: str, context: dict[str, Any] = Depends(require_workspace_read_access)):
     with _lock:
+        _refresh_api_branches()
         item = _branches.get(branch_id)
         if not item or item["status"] != "open" or not _agent_owns(context, item["agent_id"]):
             raise HTTPException(404, "Open branch not found")
