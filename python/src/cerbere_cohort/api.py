@@ -151,9 +151,8 @@ def _restore_api_branches(*, clear: bool = False, commit: bool = True) -> None:
 
 
 def _refresh_api_branches() -> None:
-    """Refresh the durable branch registry for both SQLite and PostgreSQL transports."""
-    if DATABASE_URL:
-        workspace.refresh()
+    """Refresh workspace state and the durable branch registry across transports."""
+    workspace.refresh()
     _restore_api_branches(clear=True, commit=True)
 
 if not DATABASE_URL:
