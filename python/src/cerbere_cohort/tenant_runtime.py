@@ -10,6 +10,7 @@ from uuid import UUID
 
 from .postgres import PostgresPersistentWorkspace
 from .workspace import Branch
+from .tasks import ensure_task_schema
 
 DATABASE_URL = ""
 REQUIRE_LEASES = True
@@ -42,6 +43,7 @@ def _ensure_branch_table(runtime: TenantRuntime) -> None:
         "fencing_tokens_json TEXT NOT NULL DEFAULT '{}'"
     )
     conn.commit()
+    ensure_task_schema(conn)
 
 
 def _restore_branches(runtime: TenantRuntime) -> None:
