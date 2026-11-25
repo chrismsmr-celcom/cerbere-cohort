@@ -139,7 +139,7 @@ def authenticate_oauth_mcp_token(token: str) -> dict[str, Any]:
 
     try:
         row = _membership_db.execute(
-            """SELECT role FROM public.cohort_memberships
+            """SELECT role, custom_role_id FROM public.cohort_memberships
                WHERE organization_id = ? AND user_id = ? AND status = 'active'""",
             (organization_id, user_id),
         ).fetchone()
@@ -149,6 +149,10 @@ def authenticate_oauth_mcp_token(token: str) -> dict[str, Any]:
         raise HTTPException(status_code=403, detail="No active membership for the authorized workspace")
 
     role = row["role"] if isinstance(row, dict) else row[0]
+    custom_role_id = (
+        row.get("custom_role_id") if isinstance(row, dict)
+        else (row[1] if len(row) > 1 else None)
+    )
     requested_scopes = claims.get("cohort_scopes", [])
     if not isinstance(requested_scopes, list) or not all(
         isinstance(scope, str) for scope in requested_scopes
@@ -156,7 +160,19 @@ def authenticate_oauth_mcp_token(token: str) -> dict[str, Any]:
         raise HTTPException(status_code=401, detail="Invalid OAuth scope claims")
 
     allowed = {"workspace:read", "leases:read"}
-    if role in {"owner", "admin", "member"}:
+    can_write = role in {"owner", "admin", "member"}
+    if role == "custom" and custom_role_id:
+        try:
+            permission_rows = _membership_db.execute(
+                """SELECT permission_key FROM public.cohort_role_permissions
+                   WHERE role_id = ? AND permission_key IN
+                   ('workspace:update', 'project:create', 'agent:manage')""",
+                (custom_role_id,),
+            ).fetchall()
+            can_write = bool(permission_rows)
+        except Exception as exc:
+            raise HTTPException(status_code=503, detail="Unable to verify custom role permissions") from exc
+    if can_write:
         allowed.update({"workspace:write", "leases:write"})
     scopes = sorted(allowed.intersection(requested_scopes))
     if not scopes:
