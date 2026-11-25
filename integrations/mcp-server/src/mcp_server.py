@@ -178,7 +178,7 @@ class MCPAgentAuthMiddleware:
                     (b"access-control-allow-origin", b"*"),
                     (b"access-control-allow-methods", b"GET, POST, DELETE, OPTIONS"),
                     (b"access-control-allow-headers", b"Authorization, Content-Type, Accept, MCP-Protocol-Version, MCP-Session-Id, Last-Event-Id"),
-                    (b"access-control-expose-headers", b"WWW-Authenticate, MCP-Session-Id"),
+                    (b"access-control-expose-headers", b"WWW-Authenticate, MCP-Session-Id, MCP-Protocol-Version"),
                     (b"access-control-max-age", b"600"),
                     (b"content-length", b"0"),
                 ],
@@ -220,7 +220,7 @@ class MCPAgentAuthMiddleware:
             if status not in {400, 401, 403, 503}:
                 status = 503
             detail = getattr(exc, "detail", None)
-            message = detail if isinstance(detail, str) else "Unable to authenticate agent credential"
+            message = detail if isinstance(detail, str) else "Unable to authenticate Bearer access token"
             await self._reject(send, status, message)
             return
 
@@ -235,7 +235,7 @@ class MCPAgentAuthMiddleware:
                 if b"access-control-expose-headers" not in present:
                     response_headers.append((
                         b"access-control-expose-headers",
-                        b"WWW-Authenticate, MCP-Session-Id",
+                        b"WWW-Authenticate, MCP-Session-Id, MCP-Protocol-Version",
                     ))
                 message = {**message, "headers": response_headers}
             await send(message)
