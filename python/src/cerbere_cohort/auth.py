@@ -139,9 +139,17 @@ def authenticate_oauth_mcp_token(token: str) -> dict[str, Any]:
 
     try:
         row = _membership_db.execute(
-            """SELECT role, custom_role_id FROM public.cohort_memberships
-               WHERE organization_id = ? AND user_id = ? AND status = 'active'""",
-            (organization_id, user_id),
+            """SELECT membership.role, membership.custom_role_id
+               FROM public.cohort_mcp_oauth_grants AS oauth_grant
+               JOIN public.cohort_memberships AS membership
+                 ON membership.organization_id = oauth_grant.organization_id
+                AND membership.user_id = oauth_grant.user_id
+                AND membership.status = 'active'
+               WHERE oauth_grant.user_id = ?
+                 AND oauth_grant.client_id = ?
+                 AND oauth_grant.organization_id = ?
+                 AND oauth_grant.revoked_at IS NULL""",
+            (user_id, client_id, organization_id),
         ).fetchone()
     except Exception as exc:
         raise HTTPException(status_code=503, detail="Unable to verify organization membership") from exc
