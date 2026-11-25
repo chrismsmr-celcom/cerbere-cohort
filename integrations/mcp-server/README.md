@@ -93,6 +93,24 @@ uses `integrations/mcp-server` as the service root. If Render runs commands
 relative to the service root only, use a root-level build script or configure
 the service root as the repository root and run the install command from there.
 
+### Connect from Mistral Vibe CLI (PowerShell)
+
+Cohort uses static Bearer authentication; it does not implement OAuth. Do not
+add the URL with `/mcp add <url>`, because that flow starts browser-based OAuth.
+Instead, provide the credential through Vibe's static-auth environment variable:
+
+```powershell
+$env:COHORT_AGENT_TOKEN = Read-Host "Cohort Agent Credential"
+vibe mcp add cohort --url https://cerbere-cohort.onrender.com/mcp --transport streamable-http --api-key-env COHORT_AGENT_TOKEN
+vibe
+```
+
+Run these commands in the same PowerShell window. Paste the raw `coh_...`
+credential when prompted; do not include the `Bearer ` prefix. Vibe stores the
+environment-variable name in `~/.vibe/config.toml` and sends
+`Authorization: Bearer <credential>` on MCP HTTP requests. Never put the
+credential itself in `config.toml` or commit it to source control.
+
 Each HTTP request must include `Authorization: Bearer coh_...`. The middleware
 validates the credential against PostgreSQL on every request, including expiry
 and revocation, derives its organization, and binds the authenticated
