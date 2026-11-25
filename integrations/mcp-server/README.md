@@ -100,7 +100,9 @@ add the URL with `/mcp add <url>`, because that flow starts browser-based OAuth.
 Instead, provide the credential through Vibe's static-auth environment variable:
 
 ```powershell
-$env:COHORT_AGENT_TOKEN = Read-Host "Cohort Agent Credential"
+$secure = Read-Host "Cohort Agent Credential" -AsSecureString
+$ptr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
+try { $env:COHORT_AGENT_TOKEN = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($ptr) } finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr) }
 vibe mcp add cohort --url https://cerbere-cohort.onrender.com/mcp --transport streamable-http --api-key-env COHORT_AGENT_TOKEN
 vibe
 ```
