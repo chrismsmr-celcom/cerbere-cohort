@@ -240,7 +240,11 @@ Legacy `coh_...` Bearer credentials remain accepted during migration.
    select `public.cohort_custom_access_token_hook`.
 5. Configure the MCP Render service with the same `DATABASE_URL` and
    `SUPABASE_URL` used by the Cohort API.
-6. Configure the `cohort_mcp_oauth_config.resource_url` value to the exact
+6. Set `COHORT_MCP_OAUTH_ENABLED=true` on the MCP service only after the
+   Supabase OAuth Server and Custom Access Token Hook are enabled. OAuth
+   discovery remains disabled by default so existing Bearer clients are not
+   disrupted before setup is complete.
+7. Configure the `cohort_mcp_oauth_config.resource_url` value to the exact
    public MCP resource URL. Set the same value in
    `COHORT_MCP_RESOURCE_URL` on the MCP service.
 7. Set `COHORT_MCP_RESOURCE_METADATA_URL` to the public URL of the protected
