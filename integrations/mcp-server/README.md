@@ -263,6 +263,22 @@ pretend that its tool permissions are OAuth scopes: they are signed
 Cohort-specific claims added by the Custom Access Token Hook and rechecked
 against live workspace membership on every MCP request.
 
+### Interoperability boundaries
+
+- This OAuth flow covers user-delegated MCP access using Authorization Code
+  + PKCE. Supabase Auth currently does not implement the OAuth
+  `client_credentials` grant. Headless service-to-service agents should keep
+  using Cohort Agent Credentials until a separate standards-based service
+  authorization server is introduced.
+- Supabase currently exposes Dynamic Client Registration. Clients that support
+  DCR fallback can connect; clients requiring Client ID Metadata Documents
+  (CIMD) with no DCR fallback are not supported by this authorization server
+  yet.
+- Only MCP clients that support Streamable HTTP and MCP OAuth discovery can
+  use this flow. Stdio-only or API-key-only clients need their respective
+  compatibility method.
+
+
 **Important:** OAuth is not active in production until the Supabase OAuth
 Server and Custom Access Token Hook are enabled in the project dashboard and
 the MCP service has the matching resource URL environment variable. Do not
