@@ -247,11 +247,13 @@ Legacy `coh_...` Bearer credentials remain accepted during migration.
 7. Configure the `cohort_mcp_oauth_config.resource_url` value to the exact
    public MCP resource URL. Set the same value in
    `COHORT_MCP_RESOURCE_URL` on the MCP service.
-7. Set `COHORT_MCP_RESOURCE_METADATA_URL` to the public URL of the protected
+8. Set `COHORT_MCP_RESOURCE_METADATA_URL` to the public URL of the protected
    resource metadata document if the default domain is changed.
-8. Add the exact `https://<cohort-dashboard-domain>/oauth/consent` URL to
-   Supabase Auth's allowed redirect URLs.
-9. Use an asymmetric Supabase JWT signing key (ES256 or RS256).
+9. In Supabase Authentication → URL Configuration, set the **Site URL** to
+   the Cohort dashboard origin.
+10. Add the exact `https://<cohort-dashboard-domain>/oauth/consent` URL to
+    Supabase Auth's allowed redirect URLs.
+11. Use an asymmetric Supabase JWT signing key (ES256 or RS256).
 
 When the user approves the OAuth consent screen, the Cohort API stores a grant
 keyed by `user_id + client_id` and the selected `organization_id`. The token
