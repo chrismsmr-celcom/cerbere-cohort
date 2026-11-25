@@ -145,9 +145,6 @@ class MCPAgentAuthMiddleware:
             "authorization_servers": [
                 os.getenv("SUPABASE_URL", "").rstrip("/") + "/auth/v1"
             ],
-            "scopes_supported": [
-                "workspace:read", "workspace:write", "leases:read", "leases:write"
-            ],
             "bearer_methods_supported": ["header"],
         }
         metadata_paths = {
