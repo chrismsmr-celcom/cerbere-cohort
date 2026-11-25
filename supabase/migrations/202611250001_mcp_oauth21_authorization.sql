@@ -51,10 +51,16 @@ DECLARE
     resource_url TEXT;
     scopes JSONB;
     client_id TEXT;
+    authentication_method TEXT;
+    can_workspace_read BOOLEAN := FALSE;
+    can_workspace_write BOOLEAN := FALSE;
+    can_leases_read BOOLEAN := FALSE;
+    can_leases_write BOOLEAN := FALSE;
 BEGIN
-    -- Only OAuth-issued client tokens are scoped to the MCP resource.
+    -- Only OAuth-server tokens and their refreshes are scoped to the MCP resource.
     client_id := NULLIF(claims->>'client_id', '');
-    IF client_id IS NULL THEN
+    authentication_method := COALESCE(event->>'authentication_method', '');
+    IF client_id IS NULL OR authentication_method NOT IN ('oauth', 'token_refresh') THEN
         RETURN jsonb_build_object('claims', claims);
     END IF;
 
