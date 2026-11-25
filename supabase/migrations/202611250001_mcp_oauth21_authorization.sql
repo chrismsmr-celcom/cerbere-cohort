@@ -15,6 +15,21 @@ ON CONFLICT (singleton) DO NOTHING;
 ALTER TABLE public.cohort_mcp_oauth_config ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON public.cohort_mcp_oauth_config FROM anon, authenticated;
 
+CREATE TABLE IF NOT EXISTS public.cohort_mcp_oauth_grants (
+    user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+    client_id TEXT NOT NULL CHECK (length(client_id) BETWEEN 1 AND 256),
+    organization_id UUID NOT NULL REFERENCES public.cohort_organizations(id) ON DELETE CASCADE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    revoked_at TIMESTAMPTZ,
+    PRIMARY KEY (user_id, client_id)
+);
+CREATE INDEX IF NOT EXISTS idx_cohort_mcp_oauth_grants_active
+    ON public.cohort_mcp_oauth_grants(user_id, client_id)
+    WHERE revoked_at IS NULL;
+ALTER TABLE public.cohort_mcp_oauth_grants ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON public.cohort_mcp_oauth_grants FROM anon, authenticated;
+
 CREATE OR REPLACE FUNCTION public.cohort_custom_access_token_hook(event JSONB)
 RETURNS JSONB
 LANGUAGE plpgsql
@@ -47,22 +62,21 @@ BEGIN
     END IF;
 
     user_id := NULLIF(event->>'user_id', '')::UUID;
-    BEGIN
-        organization_id := NULLIF(claims->'user_metadata'->>'cohort_mcp_organization_id', '')::UUID;
-    EXCEPTION WHEN invalid_text_representation THEN
-        organization_id := NULL;
-    END;
 
-    IF user_id IS NOT NULL AND organization_id IS NOT NULL THEN
-        SELECT membership.role
-          INTO membership_role
-          FROM public.cohort_memberships AS membership
-         WHERE membership.user_id = user_id
-           AND membership.organization_id = organization_id
+    IF user_id IS NOT NULL THEN
+        SELECT grant_row.organization_id, membership.role
+          INTO organization_id, membership_role
+          FROM public.cohort_mcp_oauth_grants AS grant_row
+          JOIN public.cohort_memberships AS membership
+            ON membership.organization_id = grant_row.organization_id
+           AND membership.user_id = grant_row.user_id
            AND membership.status = 'active'
+         WHERE grant_row.user_id = user_id
+           AND grant_row.client_id = client_id
+           AND grant_row.revoked_at IS NULL
          LIMIT 1;
 
-        IF membership_role IS NOT NULL THEN
+        IF organization_id IS NOT NULL AND membership_role IS NOT NULL THEN
             scopes := jsonb_build_array('workspace:read', 'leases:read');
             IF membership_role IN ('owner', 'admin', 'member') THEN
                 scopes := scopes || jsonb_build_array('workspace:write', 'leases:write');
