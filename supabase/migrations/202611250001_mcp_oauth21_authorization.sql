@@ -32,6 +32,7 @@ REVOKE ALL ON public.cohort_mcp_oauth_grants FROM anon, authenticated;
 
 INSERT INTO public.cohort_permissions(key, description) VALUES
     ('workspace:write', 'Write shared workspace state and branches'),
+    ('leases:read', 'Read shared resource leases'),
     ('leases:write', 'Acquire and release shared resource leases')
 ON CONFLICT (key) DO NOTHING;
 
@@ -73,15 +74,11 @@ BEGIN
             grant_row.organization_id,
             membership.role,
             (
-                membership.role IN ('owner', 'admin', 'member')
-                OR (
-                    membership.role = 'custom'
-                    AND EXISTS (
-                        SELECT 1
-                          FROM public.cohort_role_permissions AS permission
-                         WHERE permission.role_id = membership.custom_role_id
-                           AND permission.permission_key = 'workspace:write'
-                    )
+                membership.role <> 'custom'
+                OR EXISTS (
+                    SELECT 1 FROM public.cohort_role_permissions AS permission
+                     WHERE permission.role_id = membership.custom_role_id
+                       AND permission.permission_key = 'workspace:read'
                 )
             ),
             (
@@ -89,14 +86,33 @@ BEGIN
                 OR (
                     membership.role = 'custom'
                     AND EXISTS (
-                        SELECT 1
-                          FROM public.cohort_role_permissions AS permission
+                        SELECT 1 FROM public.cohort_role_permissions AS permission
+                         WHERE permission.role_id = membership.custom_role_id
+                           AND permission.permission_key = 'workspace:write'
+                    )
+                )
+            ),
+            (
+                membership.role <> 'custom'
+                OR EXISTS (
+                    SELECT 1 FROM public.cohort_role_permissions AS permission
+                     WHERE permission.role_id = membership.custom_role_id
+                       AND permission.permission_key = 'leases:read'
+                )
+            ),
+            (
+                membership.role IN ('owner', 'admin', 'member')
+                OR (
+                    membership.role = 'custom'
+                    AND EXISTS (
+                        SELECT 1 FROM public.cohort_role_permissions AS permission
                          WHERE permission.role_id = membership.custom_role_id
                            AND permission.permission_key = 'leases:write'
                     )
                 )
             )
-          INTO organization_id, membership_role, can_workspace_write, can_leases_write
+          INTO organization_id, membership_role, can_workspace_read, can_workspace_write,
+               can_leases_read, can_leases_write
           FROM public.cohort_mcp_oauth_grants AS grant_row
           JOIN public.cohort_memberships AS membership
             ON membership.organization_id = grant_row.organization_id
@@ -108,7 +124,13 @@ BEGIN
          LIMIT 1;
 
         IF organization_id IS NOT NULL AND membership_role IS NOT NULL THEN
-            scopes := jsonb_build_array('workspace:read', 'leases:read');
+            scopes := jsonb_build_array();
+            IF can_workspace_read THEN
+                scopes := scopes || jsonb_build_array('workspace:read');
+            END IF;
+            IF can_leases_read THEN
+                scopes := scopes || jsonb_build_array('leases:read');
+            END IF;
             IF can_workspace_write THEN
                 scopes := scopes || jsonb_build_array('workspace:write');
             END IF;
