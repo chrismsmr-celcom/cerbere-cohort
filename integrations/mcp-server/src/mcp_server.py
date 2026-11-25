@@ -225,8 +225,23 @@ class MCPAgentAuthMiddleware:
             return
 
         request_token = _request_principal.set(principal)
+
+        async def cors_send(message):
+            if message.get("type") == "http.response.start":
+                response_headers = list(message.get("headers", []))
+                present = {key.lower() for key, _ in response_headers}
+                if b"access-control-allow-origin" not in present:
+                    response_headers.append((b"access-control-allow-origin", b"*"))
+                if b"access-control-expose-headers" not in present:
+                    response_headers.append((
+                        b"access-control-expose-headers",
+                        b"WWW-Authenticate, MCP-Session-Id",
+                    ))
+                message = {**message, "headers": response_headers}
+            await send(message)
+
         try:
-            await self.app(scope, receive, send)
+            await self.app(scope, receive, cors_send)
         finally:
             _request_principal.reset(request_token)
 
