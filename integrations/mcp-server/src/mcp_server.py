@@ -77,7 +77,7 @@ _request_principal: contextvars.ContextVar[dict[str, Any] | None] = contextvars.
 
 
 class MCPAgentAuthMiddleware:
-    """Authenticate every remote MCP HTTP request with its own agent credential."""
+    """Authenticate remote MCP HTTP requests with a scoped Bearer access token."""
 
     def __init__(self, app, organization_id: str | None = None):
         self.app = app
@@ -96,7 +96,7 @@ class MCPAgentAuthMiddleware:
         if status == 401:
             metadata_url = os.getenv(
                 "COHORT_MCP_RESOURCE_METADATA_URL",
-                "https://cerbere-cohort.onrender.com/.well-known/oauth-protected-resource",
+                "https://cerbere-cohort.onrender.com/.well-known/oauth-protected-resource/mcp",
             ).strip()
             challenge = (
                 'Bearer realm="cohort", resource_metadata="' + metadata_url + '"'
@@ -189,7 +189,7 @@ class MCPAgentAuthMiddleware:
         headers = {key.lower(): value for key, value in scope.get("headers", [])}
         authorization = headers.get(b"authorization", b"").decode("latin-1").strip()
         if not authorization.startswith("Bearer "):
-            await self._reject(send, 401, "Bearer agent credential required")
+            await self._reject(send, 401, "Bearer access token required")
             return
 
         agent_token = authorization[7:].strip()
