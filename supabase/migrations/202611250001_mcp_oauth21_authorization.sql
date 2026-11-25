@@ -64,8 +64,24 @@ BEGIN
     user_id := NULLIF(event->>'user_id', '')::UUID;
 
     IF user_id IS NOT NULL THEN
-        SELECT grant_row.organization_id, membership.role
-          INTO organization_id, membership_role
+        SELECT
+            grant_row.organization_id,
+            membership.role,
+            (
+                membership.role IN ('owner', 'admin', 'member')
+                OR (
+                    membership.role = 'custom'
+                    AND EXISTS (
+                        SELECT 1
+                          FROM public.cohort_role_permissions AS permission
+                         WHERE permission.role_id = membership.custom_role_id
+                           AND permission.permission_key IN (
+                               'workspace:update', 'project:create', 'agent:manage'
+                           )
+                    )
+                )
+            )
+          INTO organization_id, membership_role, can_write
           FROM public.cohort_mcp_oauth_grants AS grant_row
           JOIN public.cohort_memberships AS membership
             ON membership.organization_id = grant_row.organization_id
@@ -78,7 +94,7 @@ BEGIN
 
         IF organization_id IS NOT NULL AND membership_role IS NOT NULL THEN
             scopes := jsonb_build_array('workspace:read', 'leases:read');
-            IF membership_role IN ('owner', 'admin', 'member') THEN
+            IF can_write THEN
                 scopes := scopes || jsonb_build_array('workspace:write', 'leases:write');
             END IF;
             claims := claims || jsonb_build_object(
