@@ -103,8 +103,8 @@ def test_remote_mcp_accepts_supabase_oauth_access_token(monkeypatch):
 def test_remote_mcp_routes_options_without_agent_authentication():
     middleware = MCPAgentAuthMiddleware(lambda *args: None, "org-a")
     messages, observed = asyncio.run(_invoke(middleware, method="OPTIONS"))
-    assert _status(messages) == 200
-    assert observed == [None]
+    assert _status(messages) == 204
+    assert observed == []
 
 
 def test_remote_mcp_rejects_organization_header_mismatch(monkeypatch):
