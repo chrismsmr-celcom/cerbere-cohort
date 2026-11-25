@@ -90,6 +90,8 @@ class MCPAgentAuthMiddleware:
             (b"content-type", b"application/json"),
             (b"content-length", str(len(body)).encode("ascii")),
             (b"cache-control", b"no-store"),
+            (b"access-control-allow-origin", b"*"),
+            (b"access-control-expose-headers", b"WWW-Authenticate, MCP-Session-Id"),
         ]
         if status == 401:
             metadata_url = os.getenv(
