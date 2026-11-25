@@ -84,6 +84,23 @@ def test_remote_mcp_publishes_rfc9728_protected_resource_metadata(monkeypatch):
     assert observed == []
 
 
+def test_remote_mcp_rejects_oauth_token_until_feature_is_enabled(monkeypatch):
+    monkeypatch.delenv("COHORT_MCP_OAUTH_ENABLED", raising=False)
+    monkeypatch.setattr(
+        mcp_server,
+        "authenticate_oauth_mcp_token",
+        lambda token: (_ for _ in ()).throw(AssertionError("OAuth validator must not run")),
+    )
+    middleware = MCPAgentAuthMiddleware(lambda *args: None, "org-a")
+    messages, observed = asyncio.run(
+        _invoke(middleware, [(b"authorization", b"Bearer oauth.jwt.token")])
+    )
+    assert _status(messages) == 401
+    start = next(message for message in messages if message["type"] == "http.response.start")
+    assert b"resource_metadata" not in dict(start["headers"])[b"www-authenticate"]
+    assert observed == []
+
+
 def test_remote_mcp_oauth_metadata_is_disabled_by_default(monkeypatch):
     monkeypatch.delenv("COHORT_MCP_OAUTH_ENABLED", raising=False)
     middleware = MCPAgentAuthMiddleware(lambda *args: None, "org-a")
