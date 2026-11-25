@@ -160,20 +160,22 @@ def authenticate_oauth_mcp_token(token: str) -> dict[str, Any]:
         raise HTTPException(status_code=401, detail="Invalid OAuth scope claims")
 
     allowed = {"workspace:read", "leases:read"}
-    can_write = role in {"owner", "admin", "member"}
-    if role == "custom" and custom_role_id:
+    if role in {"owner", "admin", "member"}:
+        allowed.update({"workspace:write", "leases:write"})
+    elif role == "custom" and custom_role_id:
         try:
             permission_rows = _membership_db.execute(
                 """SELECT permission_key FROM public.cohort_role_permissions
-                   WHERE role_id = ? AND permission_key IN
-                   ('workspace:update', 'project:create', 'agent:manage')""",
+                   WHERE role_id = ? AND permission_key IN ('workspace:write', 'leases:write')""",
                 (custom_role_id,),
             ).fetchall()
-            can_write = bool(permission_rows)
+            custom_permissions = {
+                permission["permission_key"] if isinstance(permission, dict) else permission[0]
+                for permission in permission_rows
+            }
+            allowed.update(custom_permissions)
         except Exception as exc:
             raise HTTPException(status_code=503, detail="Unable to verify custom role permissions") from exc
-    if can_write:
-        allowed.update({"workspace:write", "leases:write"})
     scopes = sorted(allowed.intersection(requested_scopes))
     if not scopes:
         raise HTTPException(status_code=403, detail="OAuth token has no usable Cohort permissions")
