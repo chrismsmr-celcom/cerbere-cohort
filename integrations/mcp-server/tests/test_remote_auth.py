@@ -13,15 +13,15 @@ from mcp_server import (
 )
 
 
-def _scope(headers=()):
+def _scope(headers=(), path="/mcp", method="POST"):
     return {
         "type": "http",
         "asgi": {"version": "3.0"},
         "http_version": "1.1",
-        "method": "POST",
+        "method": method,
         "scheme": "https",
-        "path": "/mcp",
-        "raw_path": b"/mcp",
+        "path": path,
+        "raw_path": path.encode("ascii"),
         "query_string": b"",
         "headers": list(headers),
         "client": ("127.0.0.1", 12345),
@@ -29,7 +29,7 @@ def _scope(headers=()):
     }
 
 
-async def _invoke(middleware, headers=()):
+async def _invoke(middleware, headers=(), path="/mcp", method="POST"):
     messages = []
     observed = []
 
@@ -47,7 +47,7 @@ async def _invoke(middleware, headers=()):
     async def send(message):
         messages.append(message)
 
-    await middleware(_scope(headers), receive, send)
+    await middleware(_scope(headers, path=path, method=method), receive, send)
     return messages, observed
 
 
@@ -55,11 +55,30 @@ def _status(messages):
     return next(message["status"] for message in messages if message["type"] == "http.response.start")
 
 
-def test_remote_mcp_rejects_missing_bearer_token():
+def test_remote_mcp_rejects_missing_bearer_token_with_static_challenge():
     middleware = MCPAgentAuthMiddleware(lambda *args: None, "org-a")
     messages, observed = asyncio.run(_invoke(middleware))
     assert _status(messages) == 401
+    start = next(message for message in messages if message["type"] == "http.response.start")
+    headers = dict(start["headers"])
+    assert headers[b"www-authenticate"] == b'Bearer realm="cohort"'
     assert observed == []
+
+
+def test_remote_mcp_does_not_advertise_oauth_metadata():
+    middleware = MCPAgentAuthMiddleware(lambda *args: None, "org-a")
+    messages, observed = asyncio.run(
+        _invoke(middleware, path="/.well-known/oauth-protected-resource")
+    )
+    assert _status(messages) == 404
+    assert observed == []
+
+
+def test_remote_mcp_routes_options_without_agent_authentication():
+    middleware = MCPAgentAuthMiddleware(lambda *args: None, "org-a")
+    messages, observed = asyncio.run(_invoke(middleware, method="OPTIONS"))
+    assert _status(messages) == 200
+    assert observed == [None]
 
 
 def test_remote_mcp_rejects_organization_header_mismatch(monkeypatch):
