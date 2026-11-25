@@ -509,7 +509,7 @@ function OAuthConsentScreen({ authorizationId, workspaces, initialWorkspaceId }:
               <span>Read shared state, branches and leases</span><span className="tag-beta">Allowed</span>
             </div>
             <div className="row" style={{ justifyContent: "space-between", gap: 12 }}>
-              <span>Create branches, write state and manage leases</span><span className="tag-beta">{canWrite ? "Allowed by role" : "Not allowed by role"}</span>
+              <span>Create branches, write state and manage leases</span><span className="tag-beta">{canWrite ? "Allowed by role" : selectedWorkspace?.role === "custom" ? "Controlled by custom permissions" : "Not allowed by role"}</span>
             </div>
           </div>
           <div className="stack">
