@@ -44,9 +44,6 @@ export default function App() {
       const selected = items.some((w) => w.id === saved) ? saved : items[0]?.id || "";
       setWorkspaceId(selected);
       setActiveWorkspaceId(selected);
-      if (selected && session.user.user_metadata?.cohort_mcp_organization_id !== selected) {
-        await supabase?.auth.updateUser({ data: { cohort_mcp_organization_id: selected } });
-      }
     } catch (err) {
       setWorkspaces([]); setWorkspaceId(""); setActiveWorkspaceId("");
       setMessage({ tone: "error", text: err instanceof Error ? err.message : "Unable to load workspace memberships." });
@@ -189,9 +186,6 @@ export default function App() {
     activeWorkspace={activeWorkspace}
     onWorkspaceChange={(id) => {
       setWorkspaceId(id); setActiveWorkspaceId(id);
-      if (session.user.user_metadata?.cohort_mcp_organization_id !== id) {
-        void supabase?.auth.updateUser({ data: { cohort_mcp_organization_id: id } });
-      }
     }}
     onWorkspaceProfileChange={({ id, name, logo_url }) => setWorkspaces((current) => current.map((workspace) => workspace.id === id ? { ...workspace, name, logo_url } : workspace))}
     onSignOut={() => { setActiveWorkspaceId(""); void supabase?.auth.signOut(); }}
@@ -455,10 +449,13 @@ function OAuthConsentScreen({ authorizationId, workspaces, initialWorkspaceId }:
       const oauth = (supabase.auth as any).oauth;
       if (approve) {
         if (!workspaceId) throw new Error("Select a workspace before authorizing access.");
-        const { error: profileError } = await supabase.auth.updateUser({
-          data: { cohort_mcp_organization_id: workspaceId },
+        const clientId = String(details?.client?.id || details?.client?.client_id || details?.client_id || "").trim();
+        if (!clientId) throw new Error("Supabase did not return the OAuth client ID.");
+        await api("/mcp/oauth/grants", {
+          method: "POST",
+          headers: { "X-Organization-ID": workspaceId },
+          body: JSON.stringify({ client_id: clientId }),
         });
-        if (profileError) throw profileError;
       }
       const result = approve
         ? await oauth.approveAuthorization(authorizationId)
