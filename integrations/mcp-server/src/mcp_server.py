@@ -75,6 +75,12 @@ _request_principal: contextvars.ContextVar[dict[str, Any] | None] = contextvars.
     "cohort_mcp_request_principal", default=None
 )
 
+def _oauth_enabled() -> bool:
+    return os.getenv("COHORT_MCP_OAUTH_ENABLED", "false").strip().lower() in {
+        "1", "true", "yes", "on"
+    }
+
+
 
 class MCPAgentAuthMiddleware:
     """Authenticate remote MCP HTTP requests with a scoped Bearer access token."""
@@ -94,13 +100,16 @@ class MCPAgentAuthMiddleware:
             (b"access-control-expose-headers", b"WWW-Authenticate, MCP-Session-Id, MCP-Protocol-Version"),
         ]
         if status == 401:
-            metadata_url = os.getenv(
-                "COHORT_MCP_RESOURCE_METADATA_URL",
-                "https://cerbere-cohort.onrender.com/.well-known/oauth-protected-resource/mcp",
-            ).strip()
-            challenge = (
-                'Bearer realm="cohort", resource_metadata="' + metadata_url + '"'
-            )
+            if _oauth_enabled():
+                metadata_url = os.getenv(
+                    "COHORT_MCP_RESOURCE_METADATA_URL",
+                    "https://cerbere-cohort.onrender.com/.well-known/oauth-protected-resource/mcp",
+                ).strip()
+                challenge = (
+                    'Bearer realm="cohort", resource_metadata="' + metadata_url + '"'
+                )
+            else:
+                challenge = 'Bearer realm="cohort"'
             response_headers.append((b"www-authenticate", challenge.encode("ascii")))
         await send({
             "type": "http.response.start",
@@ -154,6 +163,12 @@ class MCPAgentAuthMiddleware:
             "/.well-known/oauth-protected-resource/mcp",
         }
         if method == "GET" and path.rstrip("/") in metadata_paths:
+            if not _oauth_enabled():
+                await self._reject(send, 404, "MCP OAuth is not enabled on this deployment")
+                return
+            if not os.getenv("SUPABASE_URL", "").strip():
+                await self._reject(send, 503, "SUPABASE_URL is required for MCP OAuth")
+                return
             body = json.dumps(metadata, separators=(",", ":")).encode("utf-8")
             await send({
                 "type": "http.response.start",
@@ -209,6 +224,8 @@ class MCPAgentAuthMiddleware:
                 # Legacy credentials remain supported for existing deployments.
                 principal = authenticate_agent_token(agent_token, self.organization_id)
             else:
+                if not _oauth_enabled():
+                    raise HTTPException(status_code=401, detail="OAuth authentication is disabled")
                 # OAuth 2.1 access tokens are validated against Supabase JWKS,
                 # issuer and the exact Cohort MCP resource audience.
                 principal = authenticate_oauth_mcp_token(agent_token)
