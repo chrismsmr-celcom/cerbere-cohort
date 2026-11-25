@@ -248,8 +248,15 @@ Legacy `coh_...` Bearer credentials remain accepted during migration.
 The Cohort dashboard's selected workspace is stored in the authenticated user's
 `cohort_mcp_organization_id` metadata. The token hook copies it into a signed
 `organization_id` claim only after checking active membership. The MCP server
-checks that membership again on every request and intersects token scopes with
-the member's current role. A token without a valid workspace claim is rejected.
+checks that membership again on every request and derives its internal
+`workspace:read/write` and `leases:read/write` permissions from the member's
+current role. A token without a valid workspace claim is rejected.
+
+Supabase currently supports the standard OIDC scopes (`openid`, `email`,
+`profile`, `phone`) but not custom OAuth scopes. Cohort therefore does not
+pretend that its tool permissions are OAuth scopes: they are signed
+Cohort-specific claims added by the Custom Access Token Hook and rechecked
+against live workspace membership on every MCP request.
 
 **Important:** OAuth is not active in production until the Supabase OAuth
 Server and Custom Access Token Hook are enabled in the project dashboard and
