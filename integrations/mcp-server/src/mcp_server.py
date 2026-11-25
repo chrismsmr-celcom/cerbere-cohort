@@ -21,6 +21,7 @@ from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
+from fastapi import HTTPException
 
 from cerbere_cohort.errors import CerbereError
 from cerbere_cohort.auth import (
