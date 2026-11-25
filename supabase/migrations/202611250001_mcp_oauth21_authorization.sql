@@ -30,6 +30,11 @@ CREATE INDEX IF NOT EXISTS idx_cohort_mcp_oauth_grants_active
 ALTER TABLE public.cohort_mcp_oauth_grants ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON public.cohort_mcp_oauth_grants FROM anon, authenticated;
 
+INSERT INTO public.cohort_permissions(key, description) VALUES
+    ('workspace:write', 'Write shared workspace state and branches'),
+    ('leases:write', 'Acquire and release shared resource leases')
+ON CONFLICT (key) DO NOTHING;
+
 CREATE OR REPLACE FUNCTION public.cohort_custom_access_token_hook(event JSONB)
 RETURNS JSONB
 LANGUAGE plpgsql
@@ -75,13 +80,23 @@ BEGIN
                         SELECT 1
                           FROM public.cohort_role_permissions AS permission
                          WHERE permission.role_id = membership.custom_role_id
-                           AND permission.permission_key IN (
-                               'workspace:update', 'project:create', 'agent:manage'
-                           )
+                           AND permission.permission_key = 'workspace:write'
+                    )
+                )
+            ),
+            (
+                membership.role IN ('owner', 'admin', 'member')
+                OR (
+                    membership.role = 'custom'
+                    AND EXISTS (
+                        SELECT 1
+                          FROM public.cohort_role_permissions AS permission
+                         WHERE permission.role_id = membership.custom_role_id
+                           AND permission.permission_key = 'leases:write'
                     )
                 )
             )
-          INTO organization_id, membership_role, can_write
+          INTO organization_id, membership_role, can_workspace_write, can_leases_write
           FROM public.cohort_mcp_oauth_grants AS grant_row
           JOIN public.cohort_memberships AS membership
             ON membership.organization_id = grant_row.organization_id
@@ -94,8 +109,11 @@ BEGIN
 
         IF organization_id IS NOT NULL AND membership_role IS NOT NULL THEN
             scopes := jsonb_build_array('workspace:read', 'leases:read');
-            IF can_write THEN
-                scopes := scopes || jsonb_build_array('workspace:write', 'leases:write');
+            IF can_workspace_write THEN
+                scopes := scopes || jsonb_build_array('workspace:write');
+            END IF;
+            IF can_leases_write THEN
+                scopes := scopes || jsonb_build_array('leases:write');
             END IF;
             claims := claims || jsonb_build_object(
                 'organization_id', organization_id::TEXT,
