@@ -89,7 +89,7 @@ export default function Gateway({ ctx }: { ctx: Ctx }) {
       '$env:COHORT_AGENT_TOKEN = Read-Host "Cohort Agent Credential"',
       "vibe mcp add cohort --url " + MCP_URL + " --transport streamable-http --api-key-env COHORT_AGENT_TOKEN",
       "vibe",
-    ].join("\\n"),
+    ].join("\n"),
     http: [
       "curl -X POST " + base + "/api/branches \\",
       '  -H "Content-Type: application/json" \\',
