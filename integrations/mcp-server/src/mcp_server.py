@@ -23,7 +23,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
 
 from cerbere_cohort.errors import CerbereError
-from cerbere_cohort.auth import authenticate_agent_token, configure_membership_db
+from cerbere_cohort.auth import (\n    authenticate_agent_token, authenticate_oauth_mcp_token, configure_membership_db,\n)
 from cerbere_cohort.persistence import PersistentWorkspace
 from cerbere_cohort.postgres import _Connection as PostgresConnection
 from cerbere_cohort.postgres import PostgresPersistentWorkspace
@@ -89,10 +89,15 @@ class MCPAgentAuthMiddleware:
             (b"content-length", str(len(body)).encode("ascii")),
             (b"cache-control", b"no-store"),
         ]
-        # Advertise the supported authentication scheme without publishing
-        # OAuth protected-resource metadata or inviting an OAuth login flow.
         if status == 401:
-            response_headers.append((b"www-authenticate", b'Bearer realm="cohort"'))
+            metadata_url = os.getenv(
+                "COHORT_MCP_RESOURCE_METADATA_URL",
+                "https://cerbere-cohort.onrender.com/.well-known/oauth-protected-resource",
+            ).strip()
+            challenge = (
+                'Bearer realm="cohort", resource_metadata="' + metadata_url + '"'
+            )
+            response_headers.append((b"www-authenticate", challenge.encode("ascii")))
         await send({
             "type": "http.response.start",
             "status": status,
@@ -128,23 +133,44 @@ class MCPAgentAuthMiddleware:
             })
             return
 
-        # OPTIONS carries no MCP operation and must not be challenged for an
-        # agent credential. Let the wrapped ASGI application handle the method.
-        if method == "OPTIONS":
-            await self.app(scope, receive, send)
+        # Publish RFC 9728 Protected Resource Metadata before authentication.
+        resource_url = os.getenv(
+            "COHORT_MCP_RESOURCE_URL", "https://cerbere-cohort.onrender.com/mcp"
+        ).strip()
+        resource_origin = resource_url.split("/mcp", 1)[0]
+        metadata = {
+            "resource": resource_url,
+            "authorization_servers": [
+                os.getenv("SUPABASE_URL", "").rstrip("/") + "/auth/v1"
+            ],
+            "scopes_supported": [
+                "workspace:read", "workspace:write", "leases:read", "leases:write"
+            ],
+            "bearer_methods_supported": ["header"],
+        }
+        metadata_paths = {
+            "/.well-known/oauth-protected-resource",
+            "/.well-known/oauth-protected-resource/mcp",
+        }
+        if method == "GET" and path.rstrip("/") in metadata_paths:
+            body = json.dumps(metadata, separators=(",", ":")).encode("utf-8")
+            await send({
+                "type": "http.response.start",
+                "status": 200,
+                "headers": [
+                    (b"content-type", b"application/json"),
+                    (b"content-length", str(len(body)).encode("ascii")),
+                    (b"cache-control", b"public, max-age=300"),
+                    (b"access-control-allow-origin", b"*"),
+                ],
+            })
+            await send({"type": "http.response.body", "body": body})
             return
 
-        # Cohort uses static Bearer credentials, not OAuth. Explicitly report
-        # OAuth discovery as unsupported so clients do not start browser login.
-        normalized_path = path.rstrip("/")
-        if ".well-known" in normalized_path and (
-            "oauth" in normalized_path.lower() or "openid" in normalized_path.lower()
-        ):
-            await self._reject(
-                send,
-                404,
-                "OAuth discovery is not supported; use a static Bearer agent credential",
-            )
+        # OPTIONS carries no MCP operation and must not be challenged for a
+        # credential. Let the wrapped ASGI application handle the method.
+        if method == "OPTIONS":
+            await self.app(scope, receive, send)
             return
 
         headers = {key.lower(): value for key, value in scope.get("headers", [])}
@@ -166,7 +192,13 @@ class MCPAgentAuthMiddleware:
             return
 
         try:
-            principal = authenticate_agent_token(agent_token, self.organization_id)
+            if agent_token.startswith("coh_"):
+                # Legacy credentials remain supported for existing deployments.
+                principal = authenticate_agent_token(agent_token, self.organization_id)
+            else:
+                # OAuth 2.1 access tokens are validated against Supabase JWKS,
+                # issuer and the exact Cohort MCP resource audience.
+                principal = authenticate_oauth_mcp_token(agent_token)
             if supplied_org_text and supplied_org_text.lower() != principal["organization_id"].lower():
                 await self._reject(send, 403, "Credential is not valid for this organization")
                 return
