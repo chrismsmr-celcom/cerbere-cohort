@@ -121,12 +121,21 @@ def authenticate_oauth_mcp_token(token: str) -> dict[str, Any]:
             leeway=30,
         )
         user_id = str(UUID(str(claims["sub"])))
-        organization_id = str(UUID(str(claims["organization_id"])))
         client_id = str(claims["client_id"])
         if not client_id or len(client_id) > 256:
             raise ValueError("Invalid OAuth client")
     except Exception as exc:
         raise HTTPException(status_code=401, detail="Invalid or expired Cohort OAuth token") from exc
+
+    if not claims.get("organization_id"):
+        raise HTTPException(
+            status_code=403,
+            detail="Select an active Cohort workspace before authorizing this MCP client",
+        )
+    try:
+        organization_id = str(UUID(str(claims["organization_id"])))
+    except Exception as exc:
+        raise HTTPException(status_code=401, detail="Invalid Cohort workspace claim") from exc
 
     try:
         row = _membership_db.execute(
