@@ -458,8 +458,8 @@ function OAuthConsentScreen({ authorizationId, workspaces, initialWorkspaceId }:
         });
       }
       const result = approve
-        ? await oauth.approveAuthorization(authorizationId)
-        : await oauth.denyAuthorization(authorizationId);
+        ? await oauth.approveAuthorization(authorizationId, { skipBrowserRedirect: true })
+        : await oauth.denyAuthorization(authorizationId, { skipBrowserRedirect: true });
       if (result.error) throw result.error;
       const redirectUrl = result.data?.redirect_url;
       if (!redirectUrl) throw new Error("Supabase did not return an OAuth redirect URL.");
