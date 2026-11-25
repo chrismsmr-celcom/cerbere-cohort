@@ -473,7 +473,8 @@ function OAuthConsentScreen({ authorizationId, workspaces, initialWorkspaceId }:
   const clientName = details?.client?.name || "An MCP client";
   const requestedScopes = String(details?.scope || "").split(" ").filter(Boolean);
   const selectedWorkspace = workspaces.find((workspace) => workspace.id === workspaceId);
-  const canWrite = selectedWorkspace && ["owner", "admin", "member"].includes(selectedWorkspace.role);\n  const isCustomRole = selectedWorkspace?.role === "custom";
+  const canWrite = selectedWorkspace && ["owner", "admin", "member"].includes(selectedWorkspace.role);
+  const isCustomRole = selectedWorkspace?.role === "custom";
   const labels: Record<string, string> = {
     "workspace:read": "Read shared workspace state",
     "workspace:write": "Create branches and write shared state",
