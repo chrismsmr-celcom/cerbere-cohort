@@ -92,6 +92,117 @@ def _decode_access_token(token: str) -> dict[str, Any]:
         raise HTTPException(status_code=401, detail="Invalid or expired Supabase access token") from exc
 
 
+
+def authenticate_oauth_mcp_token(token: str) -> dict[str, Any]:
+    """Validate a Supabase OAuth access token issued for the Cohort MCP resource.
+
+    The custom access-token hook adds a tenant claim only after checking the
+    user's active membership. Membership is checked again here on every MCP
+    request so a removed member cannot keep using an otherwise valid JWT.
+    """
+    if not token or len(token) > 16_384:
+        raise HTTPException(status_code=401, detail="Invalid OAuth access token")
+    if _membership_db is None:
+        raise HTTPException(status_code=503, detail="Credential database is unavailable")
+
+    supabase_url = _required_env("SUPABASE_URL").rstrip("/")
+    resource_url = os.getenv(
+        "COHORT_MCP_RESOURCE_URL", "https://cerbere-cohort.onrender.com/mcp"
+    ).strip()
+    try:
+        signing_key = _jwks_client().get_signing_key_from_jwt(token)
+        claims = jwt.decode(
+            token,
+            signing_key.key,
+            algorithms=["ES256", "RS256"],
+            audience=resource_url,
+            issuer=supabase_url + "/auth/v1",
+            options={"require": ["exp", "iat", "sub", "iss", "aud"]},
+            leeway=30,
+        )
+        user_id = str(UUID(str(claims["sub"])))
+        client_id = str(claims["client_id"])
+        if not client_id or len(client_id) > 256:
+            raise ValueError("Invalid OAuth client")
+    except Exception as exc:
+        raise HTTPException(status_code=401, detail="Invalid or expired Cohort OAuth token") from exc
+
+    if not claims.get("organization_id"):
+        raise HTTPException(
+            status_code=403,
+            detail="Select an active Cohort workspace before authorizing this MCP client",
+        )
+    try:
+        organization_id = str(UUID(str(claims["organization_id"])))
+    except Exception as exc:
+        raise HTTPException(status_code=401, detail="Invalid Cohort workspace claim") from exc
+
+    try:
+        row = _membership_db.execute(
+            """SELECT membership.role, membership.custom_role_id
+               FROM public.cohort_mcp_oauth_grants AS oauth_grant
+               JOIN public.cohort_memberships AS membership
+                 ON membership.organization_id = oauth_grant.organization_id
+                AND membership.user_id = oauth_grant.user_id
+                AND membership.status = 'active'
+               WHERE oauth_grant.user_id = ?
+                 AND oauth_grant.client_id = ?
+                 AND oauth_grant.organization_id = ?
+                 AND oauth_grant.revoked_at IS NULL""",
+            (user_id, client_id, organization_id),
+        ).fetchone()
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Unable to verify organization membership") from exc
+    if not row:
+        raise HTTPException(status_code=403, detail="No active membership for the authorized workspace")
+
+    role = row["role"] if isinstance(row, dict) else row[0]
+    custom_role_id = (
+        row.get("custom_role_id") if isinstance(row, dict)
+        else (row[1] if len(row) > 1 else None)
+    )
+    requested_scopes = claims.get("cohort_scopes", [])
+    if not isinstance(requested_scopes, list) or not all(
+        isinstance(scope, str) for scope in requested_scopes
+    ):
+        raise HTTPException(status_code=401, detail="Invalid OAuth scope claims")
+
+    allowed = set()
+    if role != "custom":
+        allowed.update({"workspace:read", "leases:read"})
+        if role in {"owner", "admin", "member"}:
+            allowed.update({"workspace:write", "leases:write"})
+    elif custom_role_id:
+        try:
+            permission_rows = _membership_db.execute(
+                """SELECT permission_key FROM public.cohort_role_permissions
+                   WHERE role_id = ? AND permission_key IN
+                   ('workspace:read', 'workspace:write', 'leases:read', 'leases:write')""",
+                (custom_role_id,),
+            ).fetchall()
+            custom_permissions = {
+                permission["permission_key"] if isinstance(permission, dict) else permission[0]
+                for permission in permission_rows
+            }
+            allowed.update(custom_permissions)
+        except Exception as exc:
+            raise HTTPException(status_code=503, detail="Unable to verify custom role permissions") from exc
+    scopes = sorted(allowed.intersection(requested_scopes))
+    if not scopes:
+        raise HTTPException(status_code=403, detail="OAuth token has no usable Cohort permissions")
+
+    import hashlib
+    agent_id = "oauth-" + hashlib.sha256(client_id.encode("utf-8")).hexdigest()[:24]
+    return {
+        "principal_type": "oauth_user",
+        "credential_id": client_id,
+        "user_id": user_id,
+        "organization_id": organization_id,
+        "agent_id": agent_id,
+        "scopes": scopes,
+        "client_id": client_id,
+    }
+
 def require_workspace_member(
     authorization: str | None = Header(default=None),
     x_organization_id: str | None = Header(default=None, alias="X-Organization-ID"),

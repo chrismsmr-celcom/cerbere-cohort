@@ -26,7 +26,7 @@ const ALL_SCOPES = ["workspace:read", "workspace:write", "leases:read", "leases:
 export default function Gateway({ ctx }: { ctx: Ctx }) {
   const { data } = ctx;
   const toast = useToast();
-  const [snippet, setSnippet] = useState<"mcp" | "vibe" | "http" | "python">("mcp");
+  const [snippet, setSnippet] = useState<"oauth" | "mcp" | "vibe" | "http" | "python">("oauth");
   const [credentials, setCredentials] = useState<AgentCredential[]>([]);
   const [credentialsLoading, setCredentialsLoading] = useState(true);
   const [credentialsError, setCredentialsError] = useState("");
@@ -74,6 +74,15 @@ export default function Gateway({ ctx }: { ctx: Ctx }) {
   useEffect(() => { void loadCredentials(); }, [loadCredentials]);
 
   const snippets = {
+    oauth: [
+      "{",
+      '  "mcpServers": {',
+      '    "cohort": {',
+      '      "url": "' + MCP_URL + '"',
+      "    }",
+      "  }",
+      "}",
+    ].join("\n"),
     mcp: [
       "{",
       '  "mcpServers": {',
@@ -163,7 +172,7 @@ export default function Gateway({ ctx }: { ctx: Ctx }) {
   };
 
   return <div className="page">
-    <PageHead title="Gateway" description="Create scoped credentials and connect agents to this workspace." />
+    <PageHead title="Gateway" description="Connect MCP clients with OAuth 2.1. Legacy agent credentials remain available for older clients." />
     {data.error && <Disconnected message={data.error} onRetry={ctx.refresh} />}
     <div className="grid">
       <Card className="c8" title="Observed agents" description="Agents seen in workspace events, branches and active leases">
@@ -172,12 +181,12 @@ export default function Gateway({ ctx }: { ctx: Ctx }) {
           {!rows.length && <tr><td colSpan={5}><Empty icon={<Cable size={20} />} title="No agents connected yet">Create a credential below, then connect an agent using MCP or the REST API.</Empty></td></tr>}
         </tbody></table></div>}
       </Card>
-      <Card className="c4" title="Connect an agent" description="Use the hosted MCP endpoint or the REST API" flush={false}>
+      <Card className="c4" title="Connect an agent" description="Recommended: MCP OAuth 2.1 discovery. No API key is required for compatible clients." flush={false}>
         <div className="stack">
-          <Seg label="Connection type" value={snippet} onChange={setSnippet} options={[{ id: "mcp", label: "Generic MCP" }, { id: "vibe", label: "Mistral Vibe CLI" }, { id: "http", label: "REST API" }, { id: "python", label: "Local Python" }]} />
+          <Seg label="Connection type" value={snippet} onChange={setSnippet} options={[{ id: "oauth", label: "MCP OAuth 2.1" }, { id: "mcp", label: "Legacy Bearer" }, { id: "vibe", label: "Mistral Vibe CLI" }, { id: "http", label: "REST API" }, { id: "python", label: "Local Python" }]} />
           <pre className="code">{snippets[snippet]}</pre>
           <button className="btn btn-secondary" onClick={() => void copy(snippets[snippet], "Connection snippet")}><Copy size={14} />Copy snippet</button>
-          {snippet === "mcp" && <p className="muted">Generic MCP configuration example. Your client must support Streamable HTTP and custom request headers.</p>}
+          {snippet === "oauth" && <p className="muted">Recommended after OAuth is enabled on the Cohort deployment. A compatible MCP client discovers authorization automatically, opens the Cohort consent page, and manages token refresh. Configure only the server URL. Until setup is complete, use Legacy Bearer.</p>}\n          {snippet === "mcp" && <p className="muted">Compatibility mode for clients that cannot complete OAuth. Uses a long-lived Cohort Agent Credential in the Authorization header.</p>}
           {snippet === "vibe" && <p className="muted">Run these commands in PowerShell, outside an active Vibe session. This registers static Bearer authentication and avoids the browser-based OAuth flow. Keep the same terminal open when launching Vibe.</p>}
           {snippet === "http" && <p className="muted">Use the workspace ID shown in Setting. The credential must belong to the agent_id in the request.</p>}
           {snippet === "python" && <p className="muted">This example runs locally in-process. It does not connect to the hosted Cohort API.</p>}

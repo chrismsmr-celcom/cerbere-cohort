@@ -24,6 +24,7 @@ export default function App() {
   const [inviteError, setInviteError] = useState("");
   const inviteAttempted = useRef(false);
   const apiConfigured = Boolean((import.meta as any).env?.VITE_API_BASE_URL || (import.meta as any).env?.VITE_API_URL);
+  const oauthAuthorizationId = new URLSearchParams(window.location.search).get("authorization_id") || "";
 
   useEffect(() => {
     if (!supabase) { setReady(true); return; }
@@ -116,9 +117,11 @@ export default function App() {
       setBusy(true); setMessage(null);
       const { error } = await supabase.auth.signInWithOtp({
         email: email.trim(),
-        options: { emailRedirectTo: inviteToken
-          ? `${window.location.origin}/app?invite=${encodeURIComponent(inviteToken)}`
-          : `${window.location.origin}/app` },
+        options: { emailRedirectTo: oauthAuthorizationId
+          ? `${window.location.origin}/oauth/consent?authorization_id=${encodeURIComponent(oauthAuthorizationId)}`
+          : inviteToken
+            ? `${window.location.origin}/app?invite=${encodeURIComponent(inviteToken)}`
+            : `${window.location.origin}/app` },
       });
       if (error) setMessage({ tone: "error", text: error.message });
       else { setSent(true); setMessage({ tone: "info", text: `We sent a secure link to ${email.trim()}. Check your inbox.` }); }
@@ -127,9 +130,11 @@ export default function App() {
     async function signInWithProvider(provider: "google" | "github" | "gitlab") {
       if (!supabase) return;
       setBusy(true); setMessage(null);
-      const redirectTo = inviteToken
-        ? `${window.location.origin}/app?invite=${encodeURIComponent(inviteToken)}`
-        : `${window.location.origin}/app`;
+      const redirectTo = oauthAuthorizationId
+        ? `${window.location.origin}/oauth/consent?authorization_id=${encodeURIComponent(oauthAuthorizationId)}`
+        : inviteToken
+          ? `${window.location.origin}/app?invite=${encodeURIComponent(inviteToken)}`
+          : `${window.location.origin}/app`;
       const { error } = await supabase.auth.signInWithOAuth({ provider, options: { redirectTo } });
       if (error) { setMessage({ tone: "error", text: error.message }); setBusy(false); }
     }
@@ -151,6 +156,11 @@ export default function App() {
     </AuthScreen>;
   }
   if (workspaceLoading) return <AuthScreen title="Loading your workspaces…" />;
+  if (oauthAuthorizationId) {
+    if (!workspaces.length) return <AuthScreen title="Workspace setup required" subtitle="Finish creating your Cohort workspace, then reconnect the MCP client." />;
+    return <OAuthConsentScreen authorizationId={oauthAuthorizationId} workspaces={workspaces}
+      initialWorkspaceId={workspaceId || workspaces[0].id} />;
+  }
   if (message?.tone === "error" && workspaces.length === 0) {
     return <AuthScreen title="Unable to load workspaces" message={message}>
       <button className="btn btn-primary btn-lg btn-block" onClick={() => void loadWorkspaces()}>Retry</button>
@@ -174,7 +184,9 @@ export default function App() {
     userEmail={session.user.email ?? undefined}
     workspaces={workspaces}
     activeWorkspace={activeWorkspace}
-    onWorkspaceChange={(id) => { setWorkspaceId(id); setActiveWorkspaceId(id); }}
+    onWorkspaceChange={(id) => {
+      setWorkspaceId(id); setActiveWorkspaceId(id);
+    }}
     onWorkspaceProfileChange={({ id, name, logo_url }) => setWorkspaces((current) => current.map((workspace) => workspace.id === id ? { ...workspace, name, logo_url } : workspace))}
     onSignOut={() => { setActiveWorkspaceId(""); void supabase?.auth.signOut(); }}
   />;
@@ -394,6 +406,129 @@ function OnboardingScreen({ initialName, email, busy, message, onSubmit, onSignO
         <button className="btn btn-secondary btn-block" onClick={onSignOut}>Sign out</button>
       </section>
       <small className="muted" style={{ position: "relative", zIndex: 1 }}>Cohort by Cerbère · Coordination for AI agents</small>
+    </main>
+  );
+}
+
+
+function OAuthConsentScreen({ authorizationId, workspaces, initialWorkspaceId }: {
+  authorizationId: string; workspaces: CohortWorkspace[]; initialWorkspaceId: string;
+}) {
+  const [details, setDetails] = useState<any>(null);
+  const [workspaceId, setWorkspaceId] = useState(initialWorkspaceId);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    void (async () => {
+      try {
+        const oauth = (supabase?.auth as any)?.oauth;
+        if (!oauth?.getAuthorizationDetails) {
+          throw new Error("Supabase OAuth Server is not enabled or the Supabase client SDK is outdated.");
+        }
+        const { data, error: requestError } = await oauth.getAuthorizationDetails(authorizationId);
+        if (requestError) throw requestError;
+        if (!data) throw new Error("The OAuth authorization request could not be loaded.");
+        if (data.redirect_url && !data.authorization_id) {
+          window.location.assign(data.redirect_url);
+          return;
+        }
+        if (active) setDetails(data);
+      } catch (err) {
+        if (active) setError(err instanceof Error ? err.message : "Unable to load the authorization request.");
+      }
+    })();
+    return () => { active = false; };
+  }, [authorizationId]);
+
+  const decide = async (approve: boolean) => {
+    if (!supabase) return;
+    setBusy(true); setError("");
+    try {
+      const oauth = (supabase.auth as any).oauth;
+      if (approve) {
+        if (!workspaceId) throw new Error("Select a workspace before authorizing access.");
+        const clientId = String(details?.client?.id || details?.client?.client_id || details?.client_id || "").trim();
+        if (!clientId) throw new Error("Supabase did not return the OAuth client ID.");
+        await api("/mcp/oauth/grants", {
+          method: "POST",
+          headers: { "X-Organization-ID": workspaceId },
+          body: JSON.stringify({ client_id: clientId }),
+        });
+      }
+      const result = approve
+        ? await oauth.approveAuthorization(authorizationId, { skipBrowserRedirect: true })
+        : await oauth.denyAuthorization(authorizationId, { skipBrowserRedirect: true });
+      if (result.error) throw result.error;
+      const redirectUrl = result.data?.redirect_url;
+      if (!redirectUrl) throw new Error("Supabase did not return an OAuth redirect URL.");
+      window.location.assign(redirectUrl);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to process the authorization decision.");
+      setBusy(false);
+    }
+  };
+
+  const clientName = details?.client?.name || "An MCP client";
+  const requestedScopes = String(details?.scope || "").split(" ").filter(Boolean);
+  const selectedWorkspace = workspaces.find((workspace) => workspace.id === workspaceId);
+  const canWrite = selectedWorkspace && ["owner", "admin", "member"].includes(selectedWorkspace.role);
+  const isCustomRole = selectedWorkspace?.role === "custom";
+  const labels: Record<string, string> = {
+    "workspace:read": "Read shared workspace state",
+    "workspace:write": "Create branches and write shared state",
+    "leases:read": "Read resource leases",
+    "leases:write": "Acquire and release resource leases",
+    openid: "Verify your Cohort identity",
+    email: "Read your account email",
+    profile: "Read your basic profile",
+  };
+
+  return (
+    <main className="auth-page">
+      <div className="app-bg" aria-hidden /><div className="bg-noise" aria-hidden />
+      <section className="auth-card" style={{ width: "min(100% - 32px, 560px)" }}>
+        <div className="row"><img src={cohortLogo} alt="" width={32} height={32} /><strong style={{ fontSize: 18, color: "var(--ink)" }}>Cohort</strong><span className="tag-beta">OAuth</span></div>
+        <div>
+          <p className="auth-eyebrow">MCP CONNECTION REQUEST</p>
+          <h1>Authorize {clientName}</h1>
+          <p>This client is requesting access to your Cohort workspace. Review the permissions before continuing.</p>
+        </div>
+        {error && <p role="alert" className="notice err">{error}</p>}
+        {!details && !error && <p className="muted">Loading authorization details…</p>}
+        {details && <>
+          <label className="field">Workspace
+            <select value={workspaceId} onChange={(event) => setWorkspaceId(event.target.value)}>
+              {workspaces.map((workspace) => <option key={workspace.id} value={workspace.id}>{workspace.name} ({workspace.role})</option>)}
+            </select>
+          </label>
+          <div className="stack">
+            <strong>Cohort workspace access</strong>
+            <p className="muted">The connected client will act as a separate agent identity in this workspace.</p>
+            <div className="row" style={{ justifyContent: "space-between", gap: 12 }}>
+              <span>Read shared state, branches and leases</span><span className="tag-beta">{isCustomRole ? "Controlled by custom permissions" : "Allowed by role"}</span>
+            </div>
+            <div className="row" style={{ justifyContent: "space-between", gap: 12 }}>
+              <span>Create branches, write state and manage leases</span><span className="tag-beta">{canWrite ? "Allowed by role" : selectedWorkspace?.role === "custom" ? "Controlled by custom permissions" : "Not allowed by role"}</span>
+            </div>
+          </div>
+          <div className="stack">
+            <strong>Identity permissions requested by the OAuth client</strong>
+            {requestedScopes.length ? requestedScopes.map((scope) => (
+              <div key={scope} className="row" style={{ justifyContent: "space-between", gap: 12 }}>
+                <span>{labels[scope] || scope}</span><span className="tag-beta">Requested</span>
+              </div>
+            )) : <p className="muted">The client did not request named scopes. Access remains restricted by your Cohort workspace role.</p>}
+          </div>
+          {details.redirect_uri && <p className="muted" style={{ overflowWrap: "anywhere" }}>Return address: {details.redirect_uri}</p>}
+          <div className="row" style={{ gap: 10 }}>
+            <button className="btn btn-secondary btn-lg" disabled={busy} onClick={() => void decide(false)}>Deny</button>
+            <button className="btn btn-primary btn-lg" disabled={busy || !workspaceId} onClick={() => void decide(true)}>{busy ? "Processing…" : "Authorize access"}</button>
+          </div>
+        </>}
+        <small className="muted">You can revoke connected applications from your account security settings.</small>
+      </section>
     </main>
   );
 }

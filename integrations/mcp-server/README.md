@@ -204,3 +204,88 @@ For coordination between multiple agents, use one shared Streamable HTTP server.
 - Stdio remains process-bound to one agent credential.
 - It is not a multi-region coordination service.
 - Local unauthenticated HTTP is for loopback development only.
+
+
+## Hosted OAuth 2.1 authentication (recommended)
+
+The hosted MCP endpoint supports the MCP authorization discovery flow using
+Supabase Auth as its OAuth 2.1 authorization server. Clients that implement
+MCP OAuth can connect with only the MCP URL; no Cohort API credential or
+provider-specific header is required.
+
+```json
+{
+  "mcpServers": {
+    "cohort": {
+      "url": "https://cerbere-cohort.onrender.com/mcp"
+    }
+  }
+}
+```
+
+The MCP server publishes RFC 9728 Protected Resource Metadata at
+`/.well-known/oauth-protected-resource/mcp` (with an origin-level alias) and advertises the Supabase Auth
+issuer. Supabase handles Authorization Code + PKCE, token issuance and refresh.
+Legacy `coh_...` Bearer credentials remain accepted during migration.
+
+### Required Supabase project setup
+
+1. Apply migration `202611250001_mcp_oauth21_authorization.sql`.
+2. In Supabase Dashboard, open **Authentication → OAuth Server** and enable
+   OAuth 2.1. Set the authorization path to `/oauth/consent`.
+3. Enable Dynamic Client Registration for MCP clients that require it. Newer
+   clients may prefer Client ID Metadata Documents; Supabase's registration
+   endpoint is the compatibility fallback.
+4. In **Authentication → Hooks**, enable the **Custom Access Token** hook and
+   select `public.cohort_custom_access_token_hook`.
+5. Configure the MCP Render service with the same `DATABASE_URL` and
+   `SUPABASE_URL` used by the Cohort API.
+6. Set `COHORT_MCP_OAUTH_ENABLED=true` on the MCP service only after the
+   Supabase OAuth Server and Custom Access Token Hook are enabled. OAuth
+   discovery remains disabled by default so existing Bearer clients are not
+   disrupted before setup is complete.
+7. Configure the `cohort_mcp_oauth_config.resource_url` value to the exact
+   public MCP resource URL. Set the same value in
+   `COHORT_MCP_RESOURCE_URL` on the MCP service.
+8. Set `COHORT_MCP_RESOURCE_METADATA_URL` to the public URL of the protected
+   resource metadata document if the default domain is changed.
+9. In Supabase Authentication → URL Configuration, set the **Site URL** to
+   the Cohort dashboard origin.
+10. Add the exact `https://<cohort-dashboard-domain>/oauth/consent` URL to
+    Supabase Auth's allowed redirect URLs.
+11. Use an asymmetric Supabase JWT signing key (ES256 or RS256).
+
+When the user approves the OAuth consent screen, the Cohort API stores a grant
+keyed by `user_id + client_id` and the selected `organization_id`. The token
+hook copies that grant into a signed `organization_id` claim only after
+checking active membership. The MCP server checks that membership again on
+every request and derives its internal `workspace:read/write` and
+`leases:read/write` permissions from the member's current role. A token
+without a valid per-client workspace grant is rejected.
+
+Supabase currently supports the standard OIDC scopes (`openid`, `email`,
+`profile`, `phone`) but not custom OAuth scopes. Cohort therefore does not
+pretend that its tool permissions are OAuth scopes: they are signed
+Cohort-specific claims added by the Custom Access Token Hook and rechecked
+against live workspace membership on every MCP request.
+
+### Interoperability boundaries
+
+- This OAuth flow covers user-delegated MCP access using Authorization Code
+  + PKCE. Supabase Auth currently does not implement the OAuth
+  `client_credentials` grant. Headless service-to-service agents should keep
+  using Cohort Agent Credentials until a separate standards-based service
+  authorization server is introduced.
+- Supabase currently exposes Dynamic Client Registration. Clients that support
+  DCR fallback can connect; clients requiring Client ID Metadata Documents
+  (CIMD) with no DCR fallback are not supported by this authorization server
+  yet.
+- Only MCP clients that support Streamable HTTP and MCP OAuth discovery can
+  use this flow. Stdio-only or API-key-only clients need their respective
+  compatibility method.
+
+
+**Important:** OAuth is not active in production until the Supabase OAuth
+Server and Custom Access Token Hook are enabled in the project dashboard and
+the MCP service has the matching resource URL environment variable. Do not
+disable authentication to work around a failed discovery or token exchange.

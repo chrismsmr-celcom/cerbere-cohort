@@ -21,9 +21,12 @@ from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
+from fastapi import HTTPException
 
 from cerbere_cohort.errors import CerbereError
-from cerbere_cohort.auth import authenticate_agent_token, configure_membership_db
+from cerbere_cohort.auth import (
+    authenticate_agent_token, authenticate_oauth_mcp_token, configure_membership_db,
+)
 from cerbere_cohort.persistence import PersistentWorkspace
 from cerbere_cohort.postgres import _Connection as PostgresConnection
 from cerbere_cohort.postgres import PostgresPersistentWorkspace
@@ -73,9 +76,15 @@ _request_principal: contextvars.ContextVar[dict[str, Any] | None] = contextvars.
     "cohort_mcp_request_principal", default=None
 )
 
+def _oauth_enabled() -> bool:
+    return os.getenv("COHORT_MCP_OAUTH_ENABLED", "false").strip().lower() in {
+        "1", "true", "yes", "on"
+    }
+
+
 
 class MCPAgentAuthMiddleware:
-    """Authenticate every remote MCP HTTP request with its own agent credential."""
+    """Authenticate remote MCP HTTP requests with a scoped Bearer access token."""
 
     def __init__(self, app, organization_id: str | None = None):
         self.app = app
@@ -88,11 +97,21 @@ class MCPAgentAuthMiddleware:
             (b"content-type", b"application/json"),
             (b"content-length", str(len(body)).encode("ascii")),
             (b"cache-control", b"no-store"),
+            (b"access-control-allow-origin", b"*"),
+            (b"access-control-expose-headers", b"WWW-Authenticate, MCP-Session-Id, MCP-Protocol-Version"),
         ]
-        # Advertise the supported authentication scheme without publishing
-        # OAuth protected-resource metadata or inviting an OAuth login flow.
         if status == 401:
-            response_headers.append((b"www-authenticate", b'Bearer realm="cohort"'))
+            if _oauth_enabled():
+                metadata_url = os.getenv(
+                    "COHORT_MCP_RESOURCE_METADATA_URL",
+                    "https://cerbere-cohort.onrender.com/.well-known/oauth-protected-resource/mcp",
+                ).strip()
+                challenge = (
+                    'Bearer realm="cohort", resource_metadata="' + metadata_url + '"'
+                )
+            else:
+                challenge = 'Bearer realm="cohort"'
+            response_headers.append((b"www-authenticate", challenge.encode("ascii")))
         await send({
             "type": "http.response.start",
             "status": status,
@@ -128,29 +147,65 @@ class MCPAgentAuthMiddleware:
             })
             return
 
-        # OPTIONS carries no MCP operation and must not be challenged for an
-        # agent credential. Let the wrapped ASGI application handle the method.
-        if method == "OPTIONS":
-            await self.app(scope, receive, send)
+        # Publish RFC 9728 Protected Resource Metadata before authentication.
+        resource_url = os.getenv(
+            "COHORT_MCP_RESOURCE_URL", "https://cerbere-cohort.onrender.com/mcp"
+        ).strip()
+        resource_origin = resource_url.split("/mcp", 1)[0]
+        metadata = {
+            "resource": resource_url,
+            "authorization_servers": [
+                os.getenv("SUPABASE_URL", "").rstrip("/") + "/auth/v1"
+            ],
+            "bearer_methods_supported": ["header"],
+        }
+        metadata_paths = {
+            "/.well-known/oauth-protected-resource",
+            "/.well-known/oauth-protected-resource/mcp",
+        }
+        if method == "GET" and path.rstrip("/") in metadata_paths:
+            if not _oauth_enabled():
+                await self._reject(send, 404, "MCP OAuth is not enabled on this deployment")
+                return
+            if not os.getenv("SUPABASE_URL", "").strip():
+                await self._reject(send, 503, "SUPABASE_URL is required for MCP OAuth")
+                return
+            body = json.dumps(metadata, separators=(",", ":")).encode("utf-8")
+            await send({
+                "type": "http.response.start",
+                "status": 200,
+                "headers": [
+                    (b"content-type", b"application/json"),
+                    (b"content-length", str(len(body)).encode("ascii")),
+                    (b"cache-control", b"public, max-age=300"),
+                    (b"access-control-allow-origin", b"*"),
+                ],
+            })
+            await send({"type": "http.response.body", "body": body})
             return
 
-        # Cohort uses static Bearer credentials, not OAuth. Explicitly report
-        # OAuth discovery as unsupported so clients do not start browser login.
-        normalized_path = path.rstrip("/")
-        if ".well-known" in normalized_path and (
-            "oauth" in normalized_path.lower() or "openid" in normalized_path.lower()
-        ):
-            await self._reject(
-                send,
-                404,
-                "OAuth discovery is not supported; use a static Bearer agent credential",
-            )
+        # OPTIONS carries no MCP operation and must not be challenged for a
+        # credential. Let the wrapped ASGI application handle the method.
+        if method == "OPTIONS":
+            await send({
+                "type": "http.response.start",
+                "status": 204,
+                "headers": [
+                    (b"access-control-allow-origin", b"*"),
+                    (b"access-control-allow-methods", b"GET, POST, DELETE, OPTIONS"),
+                    (b"access-control-allow-headers", b"Authorization, Content-Type, Accept, MCP-Protocol-Version, MCP-Session-Id, Last-Event-Id"),
+                    (b"access-control-expose-headers", b"WWW-Authenticate, MCP-Session-Id, MCP-Protocol-Version"),
+                    (b"access-control-max-age", b"600"),
+                    (b"content-length", b"0"),
+                ],
+            })
+            await send({"type": "http.response.body", "body": b""})
             return
 
         headers = {key.lower(): value for key, value in scope.get("headers", [])}
         authorization = headers.get(b"authorization", b"").decode("latin-1").strip()
         if not authorization.startswith("Bearer "):
-            await self._reject(send, 401, "Bearer agent credential required")
+            await self._reject(send, 401, "Bearer access token required")
             return
 
         agent_token = authorization[7:].strip()
@@ -166,7 +221,15 @@ class MCPAgentAuthMiddleware:
             return
 
         try:
-            principal = authenticate_agent_token(agent_token, self.organization_id)
+            if agent_token.startswith("coh_"):
+                # Legacy credentials remain supported for existing deployments.
+                principal = authenticate_agent_token(agent_token, self.organization_id)
+            else:
+                if not _oauth_enabled():
+                    raise HTTPException(status_code=401, detail="OAuth authentication is disabled")
+                # OAuth 2.1 access tokens are validated against Supabase JWKS,
+                # issuer and the exact Cohort MCP resource audience.
+                principal = authenticate_oauth_mcp_token(agent_token)
             if supplied_org_text and supplied_org_text.lower() != principal["organization_id"].lower():
                 await self._reject(send, 403, "Credential is not valid for this organization")
                 return
@@ -175,13 +238,28 @@ class MCPAgentAuthMiddleware:
             if status not in {400, 401, 403, 503}:
                 status = 503
             detail = getattr(exc, "detail", None)
-            message = detail if isinstance(detail, str) else "Unable to authenticate agent credential"
+            message = detail if isinstance(detail, str) else "Unable to authenticate Bearer access token"
             await self._reject(send, status, message)
             return
 
         request_token = _request_principal.set(principal)
+
+        async def cors_send(message):
+            if message.get("type") == "http.response.start":
+                response_headers = list(message.get("headers", []))
+                present = {key.lower() for key, _ in response_headers}
+                if b"access-control-allow-origin" not in present:
+                    response_headers.append((b"access-control-allow-origin", b"*"))
+                if b"access-control-expose-headers" not in present:
+                    response_headers.append((
+                        b"access-control-expose-headers",
+                        b"WWW-Authenticate, MCP-Session-Id, MCP-Protocol-Version",
+                    ))
+                message = {**message, "headers": response_headers}
+            await send(message)
+
         try:
-            await self.app(scope, receive, send)
+            await self.app(scope, receive, cors_send)
         finally:
             _request_principal.reset(request_token)
 

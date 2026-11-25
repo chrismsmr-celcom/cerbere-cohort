@@ -55,30 +55,88 @@ def _status(messages):
     return next(message["status"] for message in messages if message["type"] == "http.response.start")
 
 
-def test_remote_mcp_rejects_missing_bearer_token_with_static_challenge():
+def test_remote_mcp_rejects_missing_bearer_token_with_oauth_discovery_challenge(monkeypatch):
+    monkeypatch.setenv("COHORT_MCP_OAUTH_ENABLED", "true")
+    monkeypatch.setenv("COHORT_MCP_RESOURCE_METADATA_URL", "https://cohort.example/.well-known/oauth-protected-resource")
     middleware = MCPAgentAuthMiddleware(lambda *args: None, "org-a")
     messages, observed = asyncio.run(_invoke(middleware))
     assert _status(messages) == 401
     start = next(message for message in messages if message["type"] == "http.response.start")
     headers = dict(start["headers"])
-    assert headers[b"www-authenticate"] == b'Bearer realm="cohort"'
+    assert b'Bearer realm="cohort"' in headers[b"www-authenticate"]
+    assert b'resource_metadata="https://cohort.example/.well-known/oauth-protected-resource"' in headers[b"www-authenticate"]
     assert observed == []
 
 
-def test_remote_mcp_does_not_advertise_oauth_metadata():
+def test_remote_mcp_publishes_rfc9728_protected_resource_metadata(monkeypatch):
+    monkeypatch.setenv("COHORT_MCP_OAUTH_ENABLED", "true")
+    monkeypatch.setenv("SUPABASE_URL", "https://project.supabase.co")
     middleware = MCPAgentAuthMiddleware(lambda *args: None, "org-a")
     messages, observed = asyncio.run(
-        _invoke(middleware, path="/.well-known/oauth-protected-resource")
+        _invoke(middleware, path="/.well-known/oauth-protected-resource", method="GET")
+    )
+    assert _status(messages) == 200
+    body = next(message["body"] for message in messages if message["type"] == "http.response.body")
+    metadata = __import__("json").loads(body)
+    assert metadata["resource"] == "https://cerbere-cohort.onrender.com/mcp"
+    assert metadata["authorization_servers"] == ["https://project.supabase.co/auth/v1"]
+    assert "scopes_supported" not in metadata
+    assert observed == []
+
+
+def test_remote_mcp_rejects_oauth_token_until_feature_is_enabled(monkeypatch):
+    monkeypatch.delenv("COHORT_MCP_OAUTH_ENABLED", raising=False)
+    monkeypatch.setattr(
+        mcp_server,
+        "authenticate_oauth_mcp_token",
+        lambda token: (_ for _ in ()).throw(AssertionError("OAuth validator must not run")),
+    )
+    middleware = MCPAgentAuthMiddleware(lambda *args: None, "org-a")
+    messages, observed = asyncio.run(
+        _invoke(middleware, [(b"authorization", b"Bearer oauth.jwt.token")])
+    )
+    assert _status(messages) == 401
+    start = next(message for message in messages if message["type"] == "http.response.start")
+    assert b"resource_metadata" not in dict(start["headers"])[b"www-authenticate"]
+    assert observed == []
+
+
+def test_remote_mcp_oauth_metadata_is_disabled_by_default(monkeypatch):
+    monkeypatch.delenv("COHORT_MCP_OAUTH_ENABLED", raising=False)
+    middleware = MCPAgentAuthMiddleware(lambda *args: None, "org-a")
+    messages, observed = asyncio.run(
+        _invoke(middleware, path="/.well-known/oauth-protected-resource/mcp", method="GET")
     )
     assert _status(messages) == 404
     assert observed == []
 
 
+def test_remote_mcp_accepts_supabase_oauth_access_token(monkeypatch):
+    monkeypatch.setenv("COHORT_MCP_OAUTH_ENABLED", "true")
+    principal = {
+        "principal_type": "oauth_user",
+        "organization_id": "org-a",
+        "agent_id": "oauth-client",
+        "scopes": ["workspace:read"],
+    }
+    calls = []
+    monkeypatch.setattr(mcp_server, "authenticate_oauth_mcp_token", lambda token: calls.append(token) or principal)
+    middleware = MCPAgentAuthMiddleware(lambda *args: None, "org-a")
+    messages, observed = asyncio.run(_invoke(
+        middleware, [(b"authorization", b"Bearer oauth.jwt.token")]
+    ))
+    assert _status(messages) == 200
+    start = next(message for message in messages if message["type"] == "http.response.start")
+    assert dict(start["headers"])[b"access-control-allow-origin"] == b"*"
+    assert calls == ["oauth.jwt.token"]
+    assert observed == [principal]
+
+
 def test_remote_mcp_routes_options_without_agent_authentication():
     middleware = MCPAgentAuthMiddleware(lambda *args: None, "org-a")
     messages, observed = asyncio.run(_invoke(middleware, method="OPTIONS"))
-    assert _status(messages) == 200
-    assert observed == [None]
+    assert _status(messages) == 204
+    assert observed == []
 
 
 def test_remote_mcp_rejects_organization_header_mismatch(monkeypatch):
@@ -190,7 +248,7 @@ def test_concurrent_requests_do_not_share_agent_identity(monkeypatch):
                 messages.append(message)
 
             await middleware(
-                _scope([(b"authorization", f"Bearer {agent_id}".encode())]),
+                _scope([(b"authorization", f"Bearer coh_{agent_id}".encode())]),
                 receive,
                 send,
             )
