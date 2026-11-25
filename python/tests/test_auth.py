@@ -325,8 +325,9 @@ def test_oauth_mcp_token_validates_audience_and_live_membership(monkeypatch):
     assert principal["agent_id"].startswith("oauth-")
     assert principal["scopes"] == ["leases:read", "workspace:read"]
     assert db.calls[0][1] == (
-        "22222222-2222-4222-8222-222222222222",
         "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "mcp-client-123",
+        "22222222-2222-4222-8222-222222222222",
     )
 
 
