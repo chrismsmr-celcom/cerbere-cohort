@@ -204,3 +204,54 @@ For coordination between multiple agents, use one shared Streamable HTTP server.
 - Stdio remains process-bound to one agent credential.
 - It is not a multi-region coordination service.
 - Local unauthenticated HTTP is for loopback development only.
+
+
+## Hosted OAuth 2.1 authentication (recommended)
+
+The hosted MCP endpoint supports the MCP authorization discovery flow using
+Supabase Auth as its OAuth 2.1 authorization server. Clients that implement
+MCP OAuth can connect with only the MCP URL; no Cohort API credential or
+provider-specific header is required.
+
+```json
+{
+  "mcpServers": {
+    "cohort": {
+      "url": "https://cerbere-cohort.onrender.com/mcp"
+    }
+  }
+}
+```
+
+The MCP server publishes RFC 9728 Protected Resource Metadata at
+`/.well-known/oauth-protected-resource` and advertises the Supabase Auth
+issuer. Supabase handles Authorization Code + PKCE, token issuance and refresh.
+Legacy `coh_...` Bearer credentials remain accepted during migration.
+
+### Required Supabase project setup
+
+1. Apply migration `202611250001_mcp_oauth21_authorization.sql`.
+2. In Supabase Dashboard, open **Authentication → OAuth Server** and enable
+   OAuth 2.1. Set the authorization path to `/oauth/consent`.
+3. Enable Dynamic Client Registration for MCP clients that require it. Newer
+   clients may prefer Client ID Metadata Documents; Supabase's registration
+   endpoint is the compatibility fallback.
+4. In **Authentication → Hooks**, enable the **Custom Access Token** hook and
+   select `public.cohort_custom_access_token_hook`.
+5. Configure the `cohort_mcp_oauth_config.resource_url` value to the exact
+   public MCP resource URL. Set the same value in
+   `COHORT_MCP_RESOURCE_URL` on the MCP service.
+6. Set `COHORT_MCP_RESOURCE_METADATA_URL` to the public URL of the protected
+   resource metadata document if the default domain is changed.
+7. Use an asymmetric Supabase JWT signing key (ES256 or RS256).
+
+The Cohort dashboard's selected workspace is stored in the authenticated user's
+`cohort_mcp_organization_id` metadata. The token hook copies it into a signed
+`organization_id` claim only after checking active membership. The MCP server
+checks that membership again on every request and intersects token scopes with
+the member's current role. A token without a valid workspace claim is rejected.
+
+**Important:** OAuth is not active in production until the Supabase OAuth
+Server and Custom Access Token Hook are enabled in the project dashboard and
+the MCP service has the matching resource URL environment variable. Do not
+disable authentication to work around a failed discovery or token exchange.
