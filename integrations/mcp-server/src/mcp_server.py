@@ -23,7 +23,9 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
 
 from cerbere_cohort.errors import CerbereError
-from cerbere_cohort.auth import (\n    authenticate_agent_token, authenticate_oauth_mcp_token, configure_membership_db,\n)
+from cerbere_cohort.auth import (
+    authenticate_agent_token, authenticate_oauth_mcp_token, configure_membership_db,
+)
 from cerbere_cohort.persistence import PersistentWorkspace
 from cerbere_cohort.postgres import _Connection as PostgresConnection
 from cerbere_cohort.postgres import PostgresPersistentWorkspace
