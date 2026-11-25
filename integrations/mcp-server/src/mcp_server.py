@@ -170,7 +170,19 @@ class MCPAgentAuthMiddleware:
         # OPTIONS carries no MCP operation and must not be challenged for a
         # credential. Let the wrapped ASGI application handle the method.
         if method == "OPTIONS":
-            await self.app(scope, receive, send)
+            await send({
+                "type": "http.response.start",
+                "status": 204,
+                "headers": [
+                    (b"access-control-allow-origin", b"*"),
+                    (b"access-control-allow-methods", b"GET, POST, DELETE, OPTIONS"),
+                    (b"access-control-allow-headers", b"Authorization, Content-Type, Accept, MCP-Protocol-Version, MCP-Session-Id, Last-Event-Id"),
+                    (b"access-control-expose-headers", b"WWW-Authenticate, MCP-Session-Id"),
+                    (b"access-control-max-age", b"600"),
+                    (b"content-length", b"0"),
+                ],
+            })
+            await send({"type": "http.response.body", "body": b""})
             return
 
         headers = {key.lower(): value for key, value in scope.get("headers", [])}
