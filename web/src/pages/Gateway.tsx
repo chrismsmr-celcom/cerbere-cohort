@@ -86,7 +86,9 @@ export default function Gateway({ ctx }: { ctx: Ctx }) {
     ].join("\n"),
     vibe: [
       "# PowerShell — paste the credential when prompted",
-      '$env:COHORT_AGENT_TOKEN = Read-Host "Cohort Agent Credential"',
+      '$secure = Read-Host "Cohort Agent Credential" -AsSecureString',
+      "$ptr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)",
+      "try { $env:COHORT_AGENT_TOKEN = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($ptr) } finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr) }",
       "vibe mcp add cohort --url " + MCP_URL + " --transport streamable-http --api-key-env COHORT_AGENT_TOKEN",
       "vibe",
     ].join("\n"),
