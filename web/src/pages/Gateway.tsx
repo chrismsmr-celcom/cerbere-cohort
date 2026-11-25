@@ -18,13 +18,15 @@ type AgentCredential = {
 };
 type CreatedCredential = AgentCredential & { token: string };
 
-const MCP_URL = (import.meta as any).env?.VITE_MCP_URL || "https://mcp.cohort.cerbereag.site/mcp";
+// Keep this fallback aligned with the public Render MCP service. Override it
+// at build time with VITE_MCP_URL when a custom domain is configured.
+const MCP_URL = (import.meta as any).env?.VITE_MCP_URL || "https://cerbere-cohort.onrender.com/mcp";
 const ALL_SCOPES = ["workspace:read", "workspace:write", "leases:read", "leases:write"];
 
 export default function Gateway({ ctx }: { ctx: Ctx }) {
   const { data } = ctx;
   const toast = useToast();
-  const [snippet, setSnippet] = useState<"mcp" | "http" | "python">("mcp");
+  const [snippet, setSnippet] = useState<"mcp" | "vibe" | "http" | "python">("mcp");
   const [credentials, setCredentials] = useState<AgentCredential[]>([]);
   const [credentialsLoading, setCredentialsLoading] = useState(true);
   const [credentialsError, setCredentialsError] = useState("");
@@ -81,6 +83,14 @@ export default function Gateway({ ctx }: { ctx: Ctx }) {
       "    }",
       "  }",
       "}",
+    ].join("\n"),
+    vibe: [
+      "# PowerShell — paste the credential when prompted",
+      '$secure = Read-Host "Cohort Agent Credential" -AsSecureString',
+      "$ptr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)",
+      "try { $env:COHORT_AGENT_TOKEN = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($ptr) } finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr) }",
+      "vibe mcp add cohort --url " + MCP_URL + " --transport streamable-http --api-key-env COHORT_AGENT_TOKEN",
+      "vibe",
     ].join("\n"),
     http: [
       "curl -X POST " + base + "/api/branches \\",
@@ -164,10 +174,11 @@ export default function Gateway({ ctx }: { ctx: Ctx }) {
       </Card>
       <Card className="c4" title="Connect an agent" description="Use the hosted MCP endpoint or the REST API" flush={false}>
         <div className="stack">
-          <Seg label="Connection type" value={snippet} onChange={setSnippet} options={[{ id: "mcp", label: "Remote MCP" }, { id: "http", label: "REST API" }, { id: "python", label: "Local Python" }]} />
+          <Seg label="Connection type" value={snippet} onChange={setSnippet} options={[{ id: "mcp", label: "Generic MCP" }, { id: "vibe", label: "Mistral Vibe CLI" }, { id: "http", label: "REST API" }, { id: "python", label: "Local Python" }]} />
           <pre className="code">{snippets[snippet]}</pre>
           <button className="btn btn-secondary" onClick={() => void copy(snippets[snippet], "Connection snippet")}><Copy size={14} />Copy snippet</button>
-          {snippet === "mcp" && <p className="muted">Your MCP client must support Streamable HTTP and custom request headers. Replace the placeholder with an agent credential.</p>}
+          {snippet === "mcp" && <p className="muted">Generic MCP configuration example. Your client must support Streamable HTTP and custom request headers.</p>}
+          {snippet === "vibe" && <p className="muted">Run these commands in PowerShell, outside an active Vibe session. This registers static Bearer authentication and avoids the browser-based OAuth flow. Keep the same terminal open when launching Vibe.</p>}
           {snippet === "http" && <p className="muted">Use the workspace ID shown in Setting. The credential must belong to the agent_id in the request.</p>}
           {snippet === "python" && <p className="muted">This example runs locally in-process. It does not connect to the hosted Cohort API.</p>}
         </div>

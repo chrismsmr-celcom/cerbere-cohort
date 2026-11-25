@@ -84,14 +84,19 @@ class MCPAgentAuthMiddleware:
     @staticmethod
     async def _reject(send, status: int, message: str) -> None:
         body = json.dumps({"error": message}).encode("utf-8")
+        response_headers = [
+            (b"content-type", b"application/json"),
+            (b"content-length", str(len(body)).encode("ascii")),
+            (b"cache-control", b"no-store"),
+        ]
+        # Advertise the supported authentication scheme without publishing
+        # OAuth protected-resource metadata or inviting an OAuth login flow.
+        if status == 401:
+            response_headers.append((b"www-authenticate", b'Bearer realm="cohort"'))
         await send({
             "type": "http.response.start",
             "status": status,
-            "headers": [
-                (b"content-type", b"application/json"),
-                (b"content-length", str(len(body)).encode("ascii")),
-                (b"cache-control", b"no-store"),
-            ],
+            "headers": response_headers,
         })
         await send({"type": "http.response.body", "body": body})
 
@@ -121,6 +126,25 @@ class MCPAgentAuthMiddleware:
                 "type": "http.response.body",
                 "body": b"" if method == "HEAD" else body,
             })
+            return
+
+        # OPTIONS carries no MCP operation and must not be challenged for an
+        # agent credential. Let the wrapped ASGI application handle the method.
+        if method == "OPTIONS":
+            await self.app(scope, receive, send)
+            return
+
+        # Cohort uses static Bearer credentials, not OAuth. Explicitly report
+        # OAuth discovery as unsupported so clients do not start browser login.
+        normalized_path = path.rstrip("/")
+        if ".well-known" in normalized_path and (
+            "oauth" in normalized_path.lower() or "openid" in normalized_path.lower()
+        ):
+            await self._reject(
+                send,
+                404,
+                "OAuth discovery is not supported; use a static Bearer agent credential",
+            )
             return
 
         headers = {key.lower(): value for key, value in scope.get("headers", [])}
