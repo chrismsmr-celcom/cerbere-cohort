@@ -224,7 +224,7 @@ provider-specific header is required.
 ```
 
 The MCP server publishes RFC 9728 Protected Resource Metadata at
-`/.well-known/oauth-protected-resource` and advertises the Supabase Auth
+`/.well-known/oauth-protected-resource/mcp` (with an origin-level alias) and advertises the Supabase Auth
 issuer. Supabase handles Authorization Code + PKCE, token issuance and refresh.
 Legacy `coh_...` Bearer credentials remain accepted during migration.
 
