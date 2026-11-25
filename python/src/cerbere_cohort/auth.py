@@ -159,14 +159,17 @@ def authenticate_oauth_mcp_token(token: str) -> dict[str, Any]:
     ):
         raise HTTPException(status_code=401, detail="Invalid OAuth scope claims")
 
-    allowed = {"workspace:read", "leases:read"}
-    if role in {"owner", "admin", "member"}:
-        allowed.update({"workspace:write", "leases:write"})
-    elif role == "custom" and custom_role_id:
+    allowed = set()
+    if role != "custom":
+        allowed.update({"workspace:read", "leases:read"})
+        if role in {"owner", "admin", "member"}:
+            allowed.update({"workspace:write", "leases:write"})
+    elif custom_role_id:
         try:
             permission_rows = _membership_db.execute(
                 """SELECT permission_key FROM public.cohort_role_permissions
-                   WHERE role_id = ? AND permission_key IN ('workspace:write', 'leases:write')""",
+                   WHERE role_id = ? AND permission_key IN
+                   ('workspace:read', 'workspace:write', 'leases:read', 'leases:write')""",
                 (custom_role_id,),
             ).fetchall()
             custom_permissions = {
