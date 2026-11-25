@@ -96,6 +96,8 @@ def test_remote_mcp_accepts_supabase_oauth_access_token(monkeypatch):
         middleware, [(b"authorization", b"Bearer oauth.jwt.token")]
     ))
     assert _status(messages) == 200
+    start = next(message for message in messages if message["type"] == "http.response.start")
+    assert dict(start["headers"])[b"access-control-allow-origin"] == b"*"
     assert calls == ["oauth.jwt.token"]
     assert observed == [principal]
 
