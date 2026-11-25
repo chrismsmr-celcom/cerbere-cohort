@@ -238,12 +238,16 @@ Legacy `coh_...` Bearer credentials remain accepted during migration.
    endpoint is the compatibility fallback.
 4. In **Authentication → Hooks**, enable the **Custom Access Token** hook and
    select `public.cohort_custom_access_token_hook`.
-5. Configure the `cohort_mcp_oauth_config.resource_url` value to the exact
+5. Configure the MCP Render service with the same `DATABASE_URL` and
+   `SUPABASE_URL` used by the Cohort API.
+6. Configure the `cohort_mcp_oauth_config.resource_url` value to the exact
    public MCP resource URL. Set the same value in
    `COHORT_MCP_RESOURCE_URL` on the MCP service.
-6. Set `COHORT_MCP_RESOURCE_METADATA_URL` to the public URL of the protected
+7. Set `COHORT_MCP_RESOURCE_METADATA_URL` to the public URL of the protected
    resource metadata document if the default domain is changed.
-7. Use an asymmetric Supabase JWT signing key (ES256 or RS256).
+8. Add the exact `https://<cohort-dashboard-domain>/oauth/consent` URL to
+   Supabase Auth's allowed redirect URLs.
+9. Use an asymmetric Supabase JWT signing key (ES256 or RS256).
 
 The Cohort dashboard's selected workspace is stored in the authenticated user's
 `cohort_mcp_organization_id` metadata. The token hook copies it into a signed
