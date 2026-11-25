@@ -473,7 +473,7 @@ function OAuthConsentScreen({ authorizationId, workspaces, initialWorkspaceId }:
   const clientName = details?.client?.name || "An MCP client";
   const requestedScopes = String(details?.scope || "").split(" ").filter(Boolean);
   const selectedWorkspace = workspaces.find((workspace) => workspace.id === workspaceId);
-  const canWrite = selectedWorkspace && ["owner", "admin", "member"].includes(selectedWorkspace.role);
+  const canWrite = selectedWorkspace && ["owner", "admin", "member"].includes(selectedWorkspace.role);\n  const isCustomRole = selectedWorkspace?.role === "custom";
   const labels: Record<string, string> = {
     "workspace:read": "Read shared workspace state",
     "workspace:write": "Create branches and write shared state",
@@ -506,7 +506,7 @@ function OAuthConsentScreen({ authorizationId, workspaces, initialWorkspaceId }:
             <strong>Cohort workspace access</strong>
             <p className="muted">The connected client will act as a separate agent identity in this workspace.</p>
             <div className="row" style={{ justifyContent: "space-between", gap: 12 }}>
-              <span>Read shared state, branches and leases</span><span className="tag-beta">Allowed</span>
+              <span>Read shared state, branches and leases</span><span className="tag-beta">{isCustomRole ? "Controlled by custom permissions" : "Allowed by role"}</span>
             </div>
             <div className="row" style={{ justifyContent: "space-between", gap: 12 }}>
               <span>Create branches, write state and manage leases</span><span className="tag-beta">{canWrite ? "Allowed by role" : selectedWorkspace?.role === "custom" ? "Controlled by custom permissions" : "Not allowed by role"}</span>
