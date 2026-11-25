@@ -82,7 +82,7 @@ export default function Gateway({ ctx }: { ctx: Ctx }) {
       "    }",
       "  }",
       "}",
-    ].join("\\n"),
+    ].join("\n"),
     mcp: [
       "{",
       '  "mcpServers": {',
