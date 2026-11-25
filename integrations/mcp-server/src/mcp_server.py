@@ -128,8 +128,8 @@ class MCPAgentAuthMiddleware:
             })
             return
 
-        # CORS preflight is not an MCP operation and must not be challenged
-        # for an agent credential. Let the wrapped ASGI app/CORS layer handle it.
+        # OPTIONS carries no MCP operation and must not be challenged for an
+        # agent credential. Let the wrapped ASGI application handle the method.
         if method == "OPTIONS":
             await self.app(scope, receive, send)
             return
