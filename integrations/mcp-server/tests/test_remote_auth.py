@@ -78,7 +78,7 @@ def test_remote_mcp_publishes_rfc9728_protected_resource_metadata(monkeypatch):
     metadata = __import__("json").loads(body)
     assert metadata["resource"] == "https://cerbere-cohort.onrender.com/mcp"
     assert metadata["authorization_servers"] == ["https://project.supabase.co/auth/v1"]
-    assert "workspace:read" in metadata["scopes_supported"]
+    assert "scopes_supported" not in metadata
     assert observed == []
 
 
@@ -218,7 +218,7 @@ def test_concurrent_requests_do_not_share_agent_identity(monkeypatch):
                 messages.append(message)
 
             await middleware(
-                _scope([(b"authorization", f"Bearer {agent_id}".encode())]),
+                _scope([(b"authorization", f"Bearer coh_{agent_id}".encode())]),
                 receive,
                 send,
             )
