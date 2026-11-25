@@ -150,13 +150,13 @@ BEGIN
 END;
 $$;
 
-DO $
+DO $role$
 BEGIN
     CREATE ROLE supabase_auth_admin NOLOGIN;
 EXCEPTION WHEN duplicate_object THEN
     NULL;
 END;
-$;
+$role$;
 
 REVOKE ALL ON FUNCTION public.cohort_custom_access_token_hook(JSONB) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.cohort_custom_access_token_hook(JSONB) TO supabase_auth_admin;
