@@ -1899,6 +1899,48 @@ def accept_organization_invitation(
     return {"accepted": True, "organization_id": str(row["organization_id"]), "role": row["role"]}
 
 
+class MCPAuthorizationGrantCreate(BaseModel):
+    client_id: str = Field(min_length=1, max_length=256)
+
+    @field_validator("client_id")
+    @classmethod
+    def _trim_client_id(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("OAuth client_id cannot be blank")
+        return value
+
+
+@app.post("/api/mcp/oauth/grants", status_code=201)
+def create_mcp_oauth_grant(
+    body: MCPAuthorizationGrantCreate,
+    context: dict[str, Any] = Depends(require_workspace_member),
+):
+    """Bind one OAuth client to the workspace explicitly selected during consent."""
+    if not DATABASE_URL or context.get("user_id") == "local":
+        raise HTTPException(status_code=503, detail="MCP OAuth grants require PostgreSQL")
+    try:
+        row = _membership_connection.execute(
+            """INSERT INTO public.cohort_mcp_oauth_grants
+                 (user_id, client_id, organization_id)
+               VALUES (?, ?, ?)
+               ON CONFLICT (user_id, client_id)
+               DO UPDATE SET organization_id = EXCLUDED.organization_id,
+                             revoked_at = NULL,
+                             updated_at = now()
+               RETURNING user_id, client_id, organization_id""",
+            (context["user_id"], body.client_id, context["organization_id"]),
+        ).fetchone()
+        _membership_connection.commit()
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Unable to save MCP OAuth authorization") from exc
+    return {
+        "authorized": True,
+        "client_id": row["client_id"],
+        "organization_id": str(row["organization_id"]),
+    }
+
+
 AGENT_SCOPES = {
     "workspace:read", "workspace:write", "leases:read", "leases:write"
 }
