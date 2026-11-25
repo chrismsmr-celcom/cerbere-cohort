@@ -297,3 +297,59 @@ def test_agent_credential_authentication_can_resolve_tenant_from_unique_token(mo
     assert "organization_id = ?" not in db.calls[0][0]
     assert len(db.calls[0][1]) == 1
     assert db.committed is True
+
+
+def test_oauth_mcp_token_validates_audience_and_live_membership(monkeypatch):
+    import cerbere_cohort.auth as auth
+
+    class FakeJwks:
+        def get_signing_key_from_jwt(self, token):
+            return type("SigningKey", (), {"key": "test-key"})()
+
+    monkeypatch.setenv("SUPABASE_URL", "https://project.supabase.co")
+    monkeypatch.setenv("COHORT_MCP_RESOURCE_URL", "https://cohort.example/mcp")
+    monkeypatch.setattr(auth, "_jwks_client", lambda: FakeJwks())
+    monkeypatch.setattr(auth.jwt, "decode", lambda *args, **kwargs: {
+        "sub": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "client_id": "mcp-client-123",
+        "organization_id": "22222222-2222-4222-8222-222222222222",
+        "cohort_scopes": ["workspace:read", "workspace:write", "leases:read", "leases:write"],
+    })
+    db = _FakeMembershipDB(role="viewer")
+    monkeypatch.setattr(auth, "_membership_db", db)
+
+    principal = auth.authenticate_oauth_mcp_token("signed-oauth-token")
+
+    assert principal["principal_type"] == "oauth_user"
+    assert principal["organization_id"] == "22222222-2222-4222-8222-222222222222"
+    assert principal["agent_id"].startswith("oauth-")
+    assert principal["scopes"] == ["leases:read", "workspace:read"]
+    assert db.calls[0][1] == (
+        "22222222-2222-4222-8222-222222222222",
+        "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    )
+
+
+def test_oauth_mcp_token_rejects_user_without_workspace_claim(monkeypatch):
+    import cerbere_cohort.auth as auth
+
+    class FakeJwks:
+        def get_signing_key_from_jwt(self, token):
+            return type("SigningKey", (), {"key": "test-key"})()
+
+    monkeypatch.setenv("SUPABASE_URL", "https://project.supabase.co")
+    monkeypatch.setenv("COHORT_MCP_RESOURCE_URL", "https://cohort.example/mcp")
+    monkeypatch.setattr(auth, "_jwks_client", lambda: FakeJwks())
+    monkeypatch.setattr(auth.jwt, "decode", lambda *args, **kwargs: {
+        "sub": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "client_id": "mcp-client-123",
+    })
+    monkeypatch.setattr(auth, "_membership_db", _FakeMembershipDB())
+
+    try:
+        auth.authenticate_oauth_mcp_token("signed-oauth-token")
+    except HTTPException as exc:
+        assert exc.status_code == 403
+        assert "Select an active Cohort workspace" in exc.detail
+    else:
+        raise AssertionError("OAuth tokens without a workspace claim must be rejected")
