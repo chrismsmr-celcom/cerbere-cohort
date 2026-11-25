@@ -249,12 +249,13 @@ Legacy `coh_...` Bearer credentials remain accepted during migration.
    Supabase Auth's allowed redirect URLs.
 9. Use an asymmetric Supabase JWT signing key (ES256 or RS256).
 
-The Cohort dashboard's selected workspace is stored in the authenticated user's
-`cohort_mcp_organization_id` metadata. The token hook copies it into a signed
-`organization_id` claim only after checking active membership. The MCP server
-checks that membership again on every request and derives its internal
-`workspace:read/write` and `leases:read/write` permissions from the member's
-current role. A token without a valid workspace claim is rejected.
+When the user approves the OAuth consent screen, the Cohort API stores a grant
+keyed by `user_id + client_id` and the selected `organization_id`. The token
+hook copies that grant into a signed `organization_id` claim only after
+checking active membership. The MCP server checks that membership again on
+every request and derives its internal `workspace:read/write` and
+`leases:read/write` permissions from the member's current role. A token
+without a valid per-client workspace grant is rejected.
 
 Supabase currently supports the standard OIDC scopes (`openid`, `email`,
 `profile`, `phone`) but not custom OAuth scopes. Cohort therefore does not
