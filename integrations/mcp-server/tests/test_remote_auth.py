@@ -56,6 +56,7 @@ def _status(messages):
 
 
 def test_remote_mcp_rejects_missing_bearer_token_with_oauth_discovery_challenge(monkeypatch):
+    monkeypatch.setenv("COHORT_MCP_OAUTH_ENABLED", "true")
     monkeypatch.setenv("COHORT_MCP_RESOURCE_METADATA_URL", "https://cohort.example/.well-known/oauth-protected-resource")
     middleware = MCPAgentAuthMiddleware(lambda *args: None, "org-a")
     messages, observed = asyncio.run(_invoke(middleware))
@@ -68,6 +69,7 @@ def test_remote_mcp_rejects_missing_bearer_token_with_oauth_discovery_challenge(
 
 
 def test_remote_mcp_publishes_rfc9728_protected_resource_metadata(monkeypatch):
+    monkeypatch.setenv("COHORT_MCP_OAUTH_ENABLED", "true")
     monkeypatch.setenv("SUPABASE_URL", "https://project.supabase.co")
     middleware = MCPAgentAuthMiddleware(lambda *args: None, "org-a")
     messages, observed = asyncio.run(
@@ -82,7 +84,18 @@ def test_remote_mcp_publishes_rfc9728_protected_resource_metadata(monkeypatch):
     assert observed == []
 
 
+def test_remote_mcp_oauth_metadata_is_disabled_by_default(monkeypatch):
+    monkeypatch.delenv("COHORT_MCP_OAUTH_ENABLED", raising=False)
+    middleware = MCPAgentAuthMiddleware(lambda *args: None, "org-a")
+    messages, observed = asyncio.run(
+        _invoke(middleware, path="/.well-known/oauth-protected-resource/mcp", method="GET")
+    )
+    assert _status(messages) == 404
+    assert observed == []
+
+
 def test_remote_mcp_accepts_supabase_oauth_access_token(monkeypatch):
+    monkeypatch.setenv("COHORT_MCP_OAUTH_ENABLED", "true")
     principal = {
         "principal_type": "oauth_user",
         "organization_id": "org-a",
